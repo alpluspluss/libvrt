@@ -315,12 +315,12 @@ TEST_F(VariantTest, VisitFunction)
 
 	auto visitor = []<typename T>(T &&arg) -> std::string
 	{
-		using T = std::decay_t<T>;
-		if constexpr (std::is_same_v<T, int>)
+		using U = std::decay_t<T>;
+		if constexpr (std::is_same_v<U, int>)
 			return "int: " + std::to_string(arg);
-		else if constexpr (std::is_same_v<T, double>)
+		else if constexpr (std::is_same_v<U, double>)
 			return "double: " + std::to_string(arg);
-		else if constexpr (std::is_same_v<T, std::string>)
+		else if constexpr (std::is_same_v<U, std::string>)
 			return "string: " + arg;
 	};
 
@@ -338,15 +338,14 @@ TEST_F(VariantTest, VisitWithVoidReturn)
 	test_variant v = 42;
 	std::string result;
 
-	vrt::visit([&]<typename T0>([[maybe_unused]] T0 &&arg)
+	vrt::visit([&]<typename T>(T&&)
 	{
-		using T = std::decay_t<T0>;
-		if constexpr (std::is_same_v<T, int>)
-			result = "visited int";
-		else if constexpr (std::is_same_v<T, double>)
+	   if constexpr (std::is_same_v<std::decay_t<T>, int>)
+	   		result = "visited int";
+	   else if constexpr (std::is_same_v<std::decay_t<T>, double>)
 			result = "visited double";
-		else if constexpr (std::is_same_v<T, std::string>)
-			result = "visited string";
+	   else if constexpr (std::is_same_v<std::decay_t<T>, std::string>)
+		 	result = "visited string";
 	}, v);
 
 	EXPECT_EQ(result, "visited int");
@@ -357,7 +356,7 @@ TEST_F(VariantTest, VisitWithMutableLambda)
 	test_variant v = 42;
 
 	auto counter = 0;
-	auto counting_visitor = [counter](auto &&arg) mutable -> int
+	auto counting_visitor = [counter](auto &&) mutable -> int
 	{
 		++counter;
 		return counter;
