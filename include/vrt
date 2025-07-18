@@ -525,7 +525,10 @@ namespace vrt
 		);
 	}
 
-	/** @brief Recursive template implementation for visit */
+	/**
+	 * @brief Recursive template implementation for visit
+	 * @note This is meant to be called only from `vrt::visit`
+	 */
 	template<std::size_t I, std::size_t N, typename Visitor, typename Variant>
 	constexpr decltype(auto) visit_recursive(Visitor&& vis, Variant&& var)
 	{
