@@ -94,47 +94,47 @@ int switch_visit(const Variant &v)
 {
 	if constexpr (std::is_same_v<Variant, vrt_variant_small>)
 	{
-		switch (v)
+		switch (v.index())
 		{
-			case Variant::template index_of<int>:
+			case Variant::template of<int>:
 				return v.template get<int>() * 2;
-			case Variant::template index_of<double>:
+			case Variant::template of<double>:
 				return static_cast<int>(v.template get<double>() * 2.0);
-			case Variant::template index_of<std::string>:
+			case Variant::template of<std::string>:
 				return static_cast<int>(v.template get<std::string>().length());
 		}
 	}
 	else if constexpr (std::is_same_v<Variant, vrt_variant_mixed>)
 	{
-		switch (v)
+		switch (v.index())
 		{
-			case Variant::template index_of<small_type>:
+			case Variant::template of<small_type>:
 				return v.template get<small_type>().value * 2;
-			case Variant::template index_of<medium_type>:
+			case Variant::template of<medium_type>:
 				return v.template get<medium_type>().value * 2;
-			case Variant::template index_of<large_type>:
+			case Variant::template of<large_type>:
 				return v.template get<large_type>().value * 2;
 		}
 	}
 	else if constexpr (std::is_same_v<Variant, vrt_variant_many>)
 	{
-		switch (v)
+		switch (v.index())
 		{
-			case Variant::template index_of<int>:
+			case Variant::template of<int>:
 				return v.template get<int>() * 2;
-			case Variant::template index_of<double>:
+			case Variant::template of<double>:
 				return static_cast<int>(v.template get<double>() * 2.0);
-			case Variant::template index_of<float>:
+			case Variant::template of<float>:
 				return static_cast<int>(v.template get<float>() * 2.0f);
-			case Variant::template index_of<char>:
+			case Variant::template of<char>:
 				return static_cast<int>(v.template get<char>()) * 2;
-			case Variant::template index_of<short>:
+			case Variant::template of<short>:
 				return static_cast<int>(v.template get<short>()) * 2;
-			case Variant::template index_of<long>:
+			case Variant::template of<long>:
 				return static_cast<int>(v.template get<long>()) * 2;
-			case Variant::template index_of<std::string>:
+			case Variant::template of<std::string>:
 				return static_cast<int>(v.template get<std::string>().length());
-			case Variant::template index_of<std::vector<int> >:
+			case Variant::template of<std::vector<int> >:
 				return static_cast<int>(v.template get<std::vector<int> >().size());
 		}
 	}
@@ -439,16 +439,120 @@ static void BM_VrtLargeObjects(benchmark::State &state)
 	}
 }
 
+static void BM_VrtVisit_Small(benchmark::State &state)
+{
+	auto [std_variants, vrt_variants] = generate_test_data<std_variant_small, vrt_variant_small>(1000);
+
+	auto visitor_lambda = [](auto &&arg) -> int
+	{
+		using T = std::decay_t<decltype(arg)>;
+		if constexpr (std::is_same_v<T, int>)
+			return arg * 2;
+		else if constexpr (std::is_same_v<T, double>)
+			return static_cast<int>(arg * 2.0);
+		else if constexpr (std::is_same_v<T, std::string>)
+			return static_cast<int>(arg.length());
+	};
+
+	for (auto _: state)
+	{
+		for (const auto &v: vrt_variants)
+		{
+			benchmark::DoNotOptimize(vrt::visit(visitor_lambda, v));
+		}
+	}
+	state.SetItemsProcessed(state.iterations() * vrt_variants.size());
+}
+
+static void BM_VrtVisit_Mixed(benchmark::State &state)
+{
+	auto [std_variants, vrt_variants] = generate_test_data<std_variant_mixed, vrt_variant_mixed>(1000);
+
+	auto visitor_lambda = [](auto &&arg) -> int
+	{
+		return arg.value * 2;
+	};
+
+	for (auto _: state)
+	{
+		for (const auto &v: vrt_variants)
+		{
+			benchmark::DoNotOptimize(vrt::visit(visitor_lambda, v));
+		}
+	}
+	state.SetItemsProcessed(state.iterations() * vrt_variants.size());
+}
+
+static void BM_VrtVisit_Many(benchmark::State &state)
+{
+	auto [std_variants, vrt_variants] = generate_test_data<std_variant_many, vrt_variant_many>(1000);
+
+	auto visitor_lambda = [](auto &&arg) -> int
+	{
+		using T = std::decay_t<decltype(arg)>;
+		if constexpr (std::is_same_v<T, int>)
+			return arg * 2;
+		else if constexpr (std::is_same_v<T, double>)
+			return static_cast<int>(arg * 2.0);
+		else if constexpr (std::is_same_v<T, float>)
+			return static_cast<int>(arg * 2.0f);
+		else if constexpr (std::is_same_v<T, char>)
+			return static_cast<int>(arg) * 2;
+		else if constexpr (std::is_same_v<T, short>)
+			return static_cast<int>(arg) * 2;
+		else if constexpr (std::is_same_v<T, long>)
+			return static_cast<int>(arg) * 2;
+		else if constexpr (std::is_same_v<T, std::string>)
+			return static_cast<int>(arg.length());
+		else if constexpr (std::is_same_v<T, std::vector<int> >)
+			return static_cast<int>(arg.size());
+	};
+
+	for (auto _: state)
+	{
+		for (const auto &v: vrt_variants)
+		{
+			benchmark::DoNotOptimize(vrt::visit(visitor_lambda, v));
+		}
+	}
+	state.SetItemsProcessed(state.iterations() * vrt_variants.size());
+}
+
+static void BM_VrtVisit_Single(benchmark::State &state)
+{
+	vrt_variant_small v = 42;
+
+	auto visitor_lambda = [](auto &&arg) -> int
+	{
+		using T = std::decay_t<decltype(arg)>;
+		if constexpr (std::is_same_v<T, int>)
+			return arg * 2;
+		else if constexpr (std::is_same_v<T, double>)
+			return static_cast<int>(arg * 2.0);
+		else if constexpr (std::is_same_v<T, std::string>)
+			return static_cast<int>(arg.length());
+	};
+
+	for (auto _: state)
+	{
+		benchmark::DoNotOptimize(vrt::visit(visitor_lambda, v));
+	}
+}
+
 BENCHMARK(BM_StdVisit_Small)->Name("std::visit/Small");
+BENCHMARK(BM_VrtVisit_Small)->Name("vrt::visit/Small");
 BENCHMARK(BM_VrtSwitch_Small)->Name("vrt::switch/Small");
 
 BENCHMARK(BM_StdVisit_Mixed)->Name("std::visit/Mixed");
+BENCHMARK(BM_VrtVisit_Mixed)->Name("vrt::visit/Mixed");
 BENCHMARK(BM_VrtSwitch_Mixed)->Name("vrt::switch/Mixed");
 
 BENCHMARK(BM_StdVisit_Many)->Name("std::visit/Many");
+BENCHMARK(BM_VrtVisit_Many)->Name("vrt::visit/Many");
 BENCHMARK(BM_VrtSwitch_Many)->Name("vrt::switch/Many");
 
 BENCHMARK(BM_StdVisit_Single)->Name("std::visit/Single");
+BENCHMARK(BM_VrtVisit_Single)->Name("vrt::visit/Single");
 BENCHMARK(BM_VrtSwitch_Single)->Name("vrt::switch/Single");
 
 BENCHMARK(BM_StdConstruction)->Name("std::variant/Construction");
