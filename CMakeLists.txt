@@ -8,6 +8,7 @@ project(libvrt
 )
 
 option(LIBVRT_BUILD_TESTS "Build tests" ON)
+option(LIBVRT_BUILD_BENCHMARKS "Build benchmarks" ON)
 option(LIBVRT_INSTALL "Enable installation" ON)
 
 add_library(vrt INTERFACE)
@@ -33,6 +34,19 @@ if(LIBVRT_BUILD_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(vrt-tests)
+endif()
+
+if(LIBVRT_BUILD_BENCHMARKS)
+    find_package(benchmark REQUIRED)
+
+    add_executable(vrt-benchmarks benches/variant.cpp)
+    target_link_libraries(vrt-benchmarks
+            PRIVATE
+            vrt::vrt
+            benchmark::benchmark
+    )
+
+    target_compile_options(vrt-benchmarks PRIVATE -O3 -DNDEBUG)
 endif()
 
 if(LIBVRT_INSTALL)
@@ -86,5 +100,6 @@ endif()
 message(STATUS "libvrt configuration:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build tests: ${LIBVRT_BUILD_TESTS}")
+message(STATUS "  Build benchmarks: ${LIBVRT_BUILD_BENCHMARKS}")
 message(STATUS "  Install: ${LIBVRT_INSTALL}")
 message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")
