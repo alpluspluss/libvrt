@@ -41,24 +41,24 @@ std::visit([](auto&& arg)
 using Value = vrt::variant<int, double, std::string>;
 
 Value v = 42;
-switch (v) 
+switch (v.index()) 
 {
-    case Value::index_of<int>:
-        std::cout << "int: " << i << '\n';
+    case Value::of<int>:
+        std::cout << "int: " << vrt::get<int>(v) << '\n';
         break;
-    case Value::index_of<double>:
-        std::cout << "double: " << d << '\n';
+    case Value::of<double>:
+        std::cout << "double: " << vrt::get<double>(v) << '\n';
         break;
-    case Value::index_of<std::string>:
-        std::cout << "string: " << s << '\n';
+    case Value::of<std::string>:
+        std::cout << "string: " << vrt::get<std::string>(v) << '\n';
         break;
 }
 ```
 
 ### Performance
 
-**`vrt::variant` delivers up to 5.3x faster performance than `std::visit`**, with switch 
-cases reaching over 1 billion operations per second. See the [benchmark results](assets/bench-results.json) 
+**`vrt::variant` delivers up to 4.4x faster performance than `std::visit`**, with switch
+cases reaching over 700 million operations per second. See the [benchmark results](assets/bench-results.json)
 for detailed performance analysis.
 
 ## Quick Start
@@ -111,16 +111,17 @@ int main()
     std::cout << "value: " << vrt::get<int>(v) << std::endl;
     
     /* the switch case */
-    switch (v)
+    switch (v.index())
     {
-    case decltype(v)::index_of<int>:
+    case decltype(v)::of<int>:
         std::cout << "int: " << vrt::get<int>(v) << '\n';
         break;
         
-    case decltype(v)::index_of<double>:
+    case decltype(v)::of<double>:
         std::cout << "double: " << vrt::get<double>(v) << '\n';
         break;
-    case decltype(v)::index_of<std::string>:
+        
+    case decltype(v)::of<std::string>:
         std::cout << "string: " << vrt::get<std::string>(v) << '\n';
         break;
     }
@@ -131,8 +132,8 @@ int main()
 
 ## API Reference
 
-`vrt::variant` provides the exact same API as `std::variant`, including non-member functions 
-like `holds_alternative` and `get`. The only difference is that you can 
+`vrt::variant` provides the exact same API as `std::variant`, including non-member functions
+like `holds_alternative`, `get`, and `visit`. The key difference is that you can
 use `switch` statements with `vrt::variant`.
 
 ### Construction and Assignment
@@ -140,7 +141,7 @@ use `switch` statements with `vrt::variant`.
 ```cpp
 vrt::variant<int, std::string> v1;                      /* default construction */
 vrt::variant<int, std::string> v2 = 42;                 /* direct initialization */
-vrt::variant<int, std::string> v3 = v1};                /* copy construction */
+vrt::variant<int, std::string> v3 = v1;                 /* copy construction */
 vrt::variant<int, std::string> v4 = std::move(v1);      /* move construction */
 
 v2 = v3;                                                /* copy assignment */
@@ -168,6 +169,22 @@ int* ptr3 = vrt::get_if<0>(&v); /* by index */
 /* state inspection */
 std::size_t idx = v.index();
 bool empty = v.valueless_by_exception();
+```
+
+### Visitor Pattern
+
+```cpp
+/* std::visit compatibility - same syntax as std::variant */
+auto result = vrt::visit([](auto&& arg) -> std::string 
+{
+    using T = std::decay_t<decltype(arg)>;
+    if constexpr (std::is_same_v<T, int>)
+        return "integer: " + std::to_string(arg);
+    else if constexpr (std::is_same_v<T, double>)
+        return "double: " + std::to_string(arg);
+    else if constexpr (std::is_same_v<T, std::string>)
+        return "string: " + arg;
+}, v);
 ```
 
 ### In-place Construction
@@ -204,9 +221,9 @@ constexpr std::size_t n = vrt::variant_size_v<variant_t>;               /* 3 */
 using first_type = vrt::variant_alternative_t<0, variant_t>;            /* int */
 using second_type = vrt::variant_alternative_t<1, variant_t>;           /* double */
 
-/* index of type `T` in the variant */
-constexpr std::size_t int_index = variant_t::index_of<int>;             /* 0 */ 
-constexpr std::size_t string_index = variant_t::index_of<std::string>;  /* 2 */
+/* index of type `T` in the variant - two equivalent forms */
+constexpr std::size_t int_index = variant_t::of<int>;                   /* 0 (short form) */ 
+constexpr std::size_t string_index = variant_t::index_of<std::string>;  /* 2 (long form) */
 ```
 
 ### Switch Case Support
@@ -216,14 +233,14 @@ using variant_t = vrt::variant<int, double, std::string>;
 
 auto process = [](const variant_t& v) 
 {
-    switch (v) 
+    switch (v.index()) 
     {
-        case variant_t::index_of<int>:
-            return "got integer: " + std::to_string(v.get<int>());
-        case variant_t::index_of<double>:
-            return "got double: " + std::to_string(v.get<double>());
-        case variant_t::index_of<std::string>:
-            return "got string: " + v.get<std::string>();
+        case variant_t::of<int>:
+            return "got integer: " + std::to_string(vrt::get<int>(v));
+        case variant_t::of<double>:
+            return "got double: " + std::to_string(vrt::get<double>(v));
+        case variant_t::of<std::string>:
+            return "got string: " + vrt::get<std::string>(v);
         default:
             return "empty variant";
     }
@@ -231,11 +248,11 @@ auto process = [](const variant_t& v)
 ```
 
 > [!NOTE]
-> `vrt::variant` uses small storage optimization (SSO) to minimize heap allocations. Types 
-> up to 24 bytes are stored inline within the variant object. When a variant contains 
-> types larger than 24 bytes, only those oversized types are heap-allocated while smaller 
+> `vrt::variant` uses small storage optimization (SSO) to minimize heap allocations. Types
+> up to 32 bytes are stored inline within the variant object. When a variant contains
+> types larger than 32 bytes, only those oversized types are heap-allocated while smaller
 > types remain inline.
-> 
+>
 > Operations are noexcept whenever possible and heap objects transfer ownership to the variant without
 > any copy operations or deallocation.
 
@@ -247,8 +264,30 @@ auto process = [](const variant_t& v)
 
 ## Migration from `std::variant`
 
-vrt is a drop-in replacement. Simply change `std::variant<T...>` to `vrt::variant<T...>` and change
-`std::visit` to switch-case.
+vrt is a drop-in replacement. Simply change `std::variant<T...>` to `vrt::variant<T...>` and optionally:
+
+1. **Keep using `std::visit`** - Replace with `vrt::visit` for full compatibility
+2. **Migrate to switch cases** - Replace visitor patterns with clean switch statements
+
+**Migration example:**
+
+```cpp
+/* from */
+std::variant<int, std::string> v = 42;
+std::visit([](auto&& arg) { /* handle */ }, v);
+
+/* to */
+vrt::variant<int, std::string> v = 42;
+vrt::visit([](auto&& arg) { /* handle */ }, v);
+
+/* final */
+vrt::variant<int, std::string> v = 42;
+switch (v.index()) 
+{
+    case decltype(v)::of<int>: /* handle int */ break;
+    case decltype(v)::of<std::string>: /* handle string */ break;
+}
+```
 
 ## License
 
