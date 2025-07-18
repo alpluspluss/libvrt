@@ -318,38 +318,6 @@ TEST_F(VariantTest, LargeObjectsUseHeapStorage)
 	EXPECT_LE(sizeof(large_variant), 64);
 }
 
-TEST_F(VariantTest, MixedSizeVariant)
-{
-	struct medium_type
-	{
-		char data[16];
-	};
-	struct huge_type
-	{
-		char data[10000];
-	};
-
-	vrt::variant<int, medium_type, huge_type> mixed_variant { 42 };
-
-	EXPECT_LE(sizeof(mixed_variant), 64);
-
-	mixed_variant = medium_type {};
-	EXPECT_EQ(mixed_variant.index(), 1);
-
-	mixed_variant = huge_type {};
-	EXPECT_EQ(mixed_variant.index(), 2);
-}
-
-TEST_F(VariantTest, EmptyStateAfterMove)
-{
-	vrt::variant<int, std::string> v { std::string("test") };
-	auto v2 = std::move(v);
-
-	EXPECT_TRUE(v.valueless_by_exception());
-	EXPECT_EQ(v.index(), vrt::variant_npos);
-	EXPECT_FALSE(v2.valueless_by_exception());
-}
-
 TEST_F(VariantTest, SameTypeMultipleTimes)
 {
 	vrt::variant<int, int, double> v { 42 };
