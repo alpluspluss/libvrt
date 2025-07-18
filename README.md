@@ -1,5 +1,5 @@
 <div align="center">
-    <img src="" alt="Logo" width="35%">
+    <img src="assets/vrt-logo.png" alt="Logo" width="35%">
     <h1>vrt</h1>
     <p>Make variants switchable again</p>
 </div>
@@ -54,6 +54,12 @@ switch (v)
         break;
 }
 ```
+
+### Performance
+
+**`vrt::variant` delivers up to 5.3x faster performance than `std::visit`**, with switch 
+cases reaching over 1 billion operations per second. See the [benchmark results](assets/bench-results.json) 
+for detailed performance analysis.
 
 ## Quick Start
 
@@ -236,6 +242,7 @@ auto process = [](const variant_t& v)
 ### CMake Build Options
 
 - `LIBVRT_BUILD_TESTS` - Build unit tests; defaults to `ON`
+- `LIBVRT_BUILD_BENCHMARKS` - Build benchmarks; defaults to `ON`
 - `LIBVRT_INSTALL` - Enable installation; defaults to `ON`
 
 ## Migration from `std::variant`
