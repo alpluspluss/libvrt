@@ -183,7 +183,7 @@ bool empty = v.valueless_by_exception();
 ### Visitor Pattern
 
 ```cpp
-/* std::visit compatibility - same syntax as std::variant */
+/* `std::visit` compatibility; same syntax as `std::variant` */
 auto result = vrt::visit([](auto&& arg) -> std::string 
 {
     using T = std::decay_t<decltype(arg)>;
@@ -230,7 +230,7 @@ constexpr std::size_t n = vrt::variant_size_v<variant_t>;               /* 3 */
 using first_type = vrt::variant_alternative_t<0, variant_t>;            /* int */
 using second_type = vrt::variant_alternative_t<1, variant_t>;           /* double */
 
-/* index of type `T` in the variant - two equivalent forms */
+/* index of type `T` in the variant; two equivalent forms */
 constexpr std::size_t int_index = variant_t::of<int>;                   /* 0 (short form) */ 
 constexpr std::size_t string_index = variant_t::index_of<std::string>;  /* 2 (long form) */
 ```
