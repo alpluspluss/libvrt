@@ -57,13 +57,13 @@ TEST_F(VariantTest, SwitchSupport)
 {
 	auto test_switch = [](const test_variant &v) -> std::string
 	{
-		switch (v)
+		switch (v.index())
 		{
-			case test_variant::index_of<int>:
+			case test_variant::of<int>:
 				return "int: " + std::to_string(v.get<int>());
-			case test_variant::index_of<double>:
+			case test_variant::of<double>:
 				return "double: " + std::to_string(v.get<double>());
-			case test_variant::index_of<std::string>:
+			case test_variant::of<std::string>:
 				return "string: " + v.get<std::string>();
 			default:
 				return "unknown";
@@ -77,9 +77,9 @@ TEST_F(VariantTest, SwitchSupport)
 
 TEST_F(VariantTest, IndexOfConstants)
 {
-	EXPECT_EQ(test_variant::index_of<int>, 0);
-	EXPECT_EQ(test_variant::index_of<double>, 1);
-	EXPECT_EQ(test_variant::index_of<std::string>, 2);
+	EXPECT_EQ(test_variant::of<int>, 0);
+	EXPECT_EQ(test_variant::of<double>, 1);
+	EXPECT_EQ(test_variant::of<std::string>, 2);
 }
 
 TEST_F(VariantTest, CopyConstruction)
@@ -355,8 +355,228 @@ TEST_F(VariantTest, SameTypeMultipleTimes)
 	vrt::variant<int, int, double> v { 42 };
 	EXPECT_EQ(v.index(), 0);
 
-	EXPECT_EQ(decltype(v)::index_of<int>, 0);
-	EXPECT_EQ(decltype(v)::index_of<double>, 2);
+	EXPECT_EQ(decltype(v)::of<int>, 0);
+	EXPECT_EQ(decltype(v)::of<double>, 2);
+}
+
+TEST_F(VariantTest, VisitFunction)
+{
+	test_variant v = 42;
+
+	auto visitor = [](auto &&arg) -> std::string
+	{
+		using T = std::decay_t<decltype(arg)>;
+		if constexpr (std::is_same_v<T, int>)
+			return "int: " + std::to_string(arg);
+		else if constexpr (std::is_same_v<T, double>)
+			return "double: " + std::to_string(arg);
+		else if constexpr (std::is_same_v<T, std::string>)
+			return "string: " + arg;
+	};
+
+	EXPECT_EQ(vrt::visit(visitor, v), "int: 42");
+
+	v = 3.14;
+	EXPECT_EQ(vrt::visit(visitor, v), "double: 3.140000");
+
+	v = std::string("test");
+	EXPECT_EQ(vrt::visit(visitor, v), "string: test");
+}
+
+TEST_F(VariantTest, VisitWithVoidReturn)
+{
+	test_variant v = 42;
+	std::string result;
+
+	vrt::visit([&]<typename T0>([[maybe_unused]] T0 &&arg)
+	{
+		using T = std::decay_t<T0>;
+		if constexpr (std::is_same_v<T, int>)
+			result = "visited int";
+		else if constexpr (std::is_same_v<T, double>)
+			result = "visited double";
+		else if constexpr (std::is_same_v<T, std::string>)
+			result = "visited string";
+	}, v);
+
+	EXPECT_EQ(result, "visited int");
+}
+
+TEST_F(VariantTest, VisitWithMutableLambda)
+{
+	test_variant v = 42;
+
+	auto counter = 0;
+	auto counting_visitor = [counter](auto &&arg) mutable -> int
+	{
+		++counter;
+		return counter;
+	};
+
+	EXPECT_EQ(vrt::visit(counting_visitor, v), 1);
+	EXPECT_EQ(vrt::visit(counting_visitor, v), 2);
+}
+
+TEST_F(VariantTest, VisitThrowsOnValueless)
+{
+	test_variant v = 42;
+	auto v2 = std::move(v);
+
+	EXPECT_THROW(vrt::visit([](auto&&) { return 0; }, v), std::bad_variant_access);
+}
+
+TEST_F(VariantTest, LargeVariantWithManyTypes)
+{
+	using big_variant = vrt::variant<
+		int, double, float, char, short, long,
+		std::string, std::vector<int>, bool,
+		std::unique_ptr<int>
+	>;
+
+	big_variant v = 42;
+	EXPECT_EQ(v.index(), big_variant::of<int>);
+
+	v = std::make_unique<int>(123);
+	EXPECT_EQ(v.index(), big_variant::of<std::unique_ptr<int>>);
+	EXPECT_EQ(*vrt::get<std::unique_ptr<int>>(v), 123);
+}
+
+TEST_F(VariantTest, MoveOnlyTypes)
+{
+	using move_only_variant = vrt::variant<std::unique_ptr<int>, std::string>;
+
+	move_only_variant v = std::make_unique<int>(42);
+	EXPECT_EQ(*vrt::get<std::unique_ptr<int>>(v), 42);
+
+	auto v2 = std::move(v);
+	EXPECT_EQ(*vrt::get<std::unique_ptr<int>>(v2), 42);
+	EXPECT_TRUE(v.valueless_by_exception());
+
+	v2 = std::string("hello");
+	switch (v2.index())
+	{
+		case move_only_variant::of<std::unique_ptr<int> >:
+			FAIL() << "Should not be unique_ptr";
+			break;
+		case move_only_variant::of<std::string>:
+			EXPECT_EQ(vrt::get<std::string>(v2), "hello");
+			break;
+	}
+}
+
+TEST_F(VariantTest, NonDefaultConstructibleFirstType)
+{
+	struct non_default
+	{
+		int value;
+
+		non_default() = delete;
+
+		explicit non_default(int v) : value(v) {}
+	};
+
+	using variant_t = vrt::variant<non_default, int>;
+
+	variant_t v { non_default { 42 } };
+	EXPECT_EQ(vrt::get<non_default>(v).value, 42);
+
+	v = 123;
+	EXPECT_EQ(vrt::get<int>(v), 123);
+}
+
+TEST_F(VariantTest, PerfectForwarding)
+{
+	struct move_tracker
+	{
+		bool was_moved_from = false;
+		bool was_moved_to = false;
+
+		move_tracker() = default;
+
+		move_tracker(const move_tracker &) = default;
+
+		move_tracker(move_tracker &&other) : was_moved_to(true)
+		{
+			other.was_moved_from = true;
+		}
+	};
+
+	using variant_t = vrt::variant<move_tracker, int>;
+
+	move_tracker tracker;
+	variant_t v { std::move(tracker) };
+
+	EXPECT_TRUE(tracker.was_moved_from);
+	EXPECT_TRUE(vrt::get<move_tracker>(v).was_moved_to);
+}
+
+TEST_F(VariantTest, ComplexSwitchPatterns)
+{
+	using complex_variant = vrt::variant<
+		int, double, std::string,
+		std::vector<int>, std::unique_ptr<int>
+	>;
+
+	auto process = [](const complex_variant &v) -> std::string
+	{
+		switch (v.index())
+		{
+			case complex_variant::of<int>:
+				return "number: " + std::to_string(vrt::get<int>(v));
+			case complex_variant::of<double>:
+				return "decimal: " + std::to_string(vrt::get<double>(v));
+			case complex_variant::of<std::string>:
+				return "text: " + vrt::get<std::string>(v);
+			case complex_variant::of<std::vector<int> >:
+			{
+				const auto &vec = vrt::get<std::vector<int> >(v);
+				return "vector of size: " + std::to_string(vec.size());
+			}
+			case complex_variant::of<std::unique_ptr<int> >:
+			{
+				const auto &ptr = vrt::get<std::unique_ptr<int> >(v);
+				return ptr ? "pointer: " + std::to_string(*ptr) : "null pointer";
+			}
+			default:
+				return "unknown";
+		}
+	};
+
+	EXPECT_EQ(process(complex_variant{42}), "number: 42");
+	EXPECT_EQ(process(complex_variant{3.14}), "decimal: 3.140000");
+	EXPECT_EQ(process(complex_variant{std::string("test")}), "text: test");
+	EXPECT_EQ(process(complex_variant{std::vector<int>{1,2,3}}), "vector of size: 3");
+	EXPECT_EQ(process(complex_variant{std::make_unique<int>(99)}), "pointer: 99");
+}
+
+TEST_F(VariantTest, NestedVariants)
+{
+	using inner_variant = vrt::variant<int, std::string>;
+	using outer_variant = vrt::variant<inner_variant, double>;
+
+	outer_variant v { inner_variant { 42 } };
+
+	switch (v.index())
+	{
+		case outer_variant::of<inner_variant>:
+		{
+			const auto &inner = vrt::get<inner_variant>(v);
+			switch (inner.index())
+			{
+				case inner_variant::of<int>:
+					EXPECT_EQ(vrt::get<int>(inner), 42);
+					break;
+				case inner_variant::of<std::string>:
+					FAIL() << "Should be int";
+					break;
+			}
+			break;
+		}
+		case outer_variant::of<double>:
+			FAIL() << "Should be inner_variant";
+			break;
+		default: __builtin_unreachable();
+	}
 }
 
 int main(int argc, char **argv)

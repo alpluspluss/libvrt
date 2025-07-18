@@ -94,47 +94,47 @@ int switch_visit(const Variant &v)
 {
 	if constexpr (std::is_same_v<Variant, vrt_variant_small>)
 	{
-		switch (v)
+		switch (v.index())
 		{
-			case Variant::template index_of<int>:
+			case Variant::template of<int>:
 				return v.template get<int>() * 2;
-			case Variant::template index_of<double>:
+			case Variant::template of<double>:
 				return static_cast<int>(v.template get<double>() * 2.0);
-			case Variant::template index_of<std::string>:
+			case Variant::template of<std::string>:
 				return static_cast<int>(v.template get<std::string>().length());
 		}
 	}
 	else if constexpr (std::is_same_v<Variant, vrt_variant_mixed>)
 	{
-		switch (v)
+		switch (v.index())
 		{
-			case Variant::template index_of<small_type>:
+			case Variant::template of<small_type>:
 				return v.template get<small_type>().value * 2;
-			case Variant::template index_of<medium_type>:
+			case Variant::template of<medium_type>:
 				return v.template get<medium_type>().value * 2;
-			case Variant::template index_of<large_type>:
+			case Variant::template of<large_type>:
 				return v.template get<large_type>().value * 2;
 		}
 	}
 	else if constexpr (std::is_same_v<Variant, vrt_variant_many>)
 	{
-		switch (v)
+		switch (v.index())
 		{
-			case Variant::template index_of<int>:
+			case Variant::template of<int>:
 				return v.template get<int>() * 2;
-			case Variant::template index_of<double>:
+			case Variant::template of<double>:
 				return static_cast<int>(v.template get<double>() * 2.0);
-			case Variant::template index_of<float>:
+			case Variant::template of<float>:
 				return static_cast<int>(v.template get<float>() * 2.0f);
-			case Variant::template index_of<char>:
+			case Variant::template of<char>:
 				return static_cast<int>(v.template get<char>()) * 2;
-			case Variant::template index_of<short>:
+			case Variant::template of<short>:
 				return static_cast<int>(v.template get<short>()) * 2;
-			case Variant::template index_of<long>:
+			case Variant::template of<long>:
 				return static_cast<int>(v.template get<long>()) * 2;
-			case Variant::template index_of<std::string>:
+			case Variant::template of<std::string>:
 				return static_cast<int>(v.template get<std::string>().length());
-			case Variant::template index_of<std::vector<int> >:
+			case Variant::template of<std::vector<int> >:
 				return static_cast<int>(v.template get<std::vector<int> >().size());
 		}
 	}

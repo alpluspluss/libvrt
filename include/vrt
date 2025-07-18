@@ -150,7 +150,7 @@ namespace vrt
 	public:
 		/** @brief Compile-time type index constants for switch statements */
 		template<typename T>
-		static constexpr std::size_t index_of = type_index<T>();
+		static constexpr std::size_t of = type_index<T>();
 
 		/** @brief Default constructor - constructs first alternative */
 		variant() noexcept(std::is_nothrow_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>)
@@ -259,12 +259,6 @@ namespace vrt
 		[[nodiscard]] constexpr bool valueless_by_exception() const noexcept
 		{
 			return i == variant_npos;
-		}
-
-		/** @brief Implicit conversion to size_t for switch statements */
-		constexpr operator std::size_t() const noexcept
-		{
-			return i;
 		}
 
 		/** @brief Construct a value of type T in place */
@@ -511,4 +505,25 @@ namespace vrt
 	/** @brief Convenience alias template for variant_alternative */
 	template<std::size_t I, typename T>
 	using variant_alternative_t = typename variant_alternative<I, T>::type;
+
+	/** @brief Visit a variant with a callable; for `std::visit` compatibility */
+	template<typename Visitor, typename Variant>
+	constexpr decltype(auto) visit(Visitor&& vis, Variant&& var)
+	{
+		if (var.valueless_by_exception())
+			throw std::bad_variant_access();
+
+		using variant_t = std::decay_t<Variant>;
+		constexpr auto visit_table = []<std::size_t... Is>(std::index_sequence<Is...>)
+		{
+			return std::array {
+				+[](Visitor&& visitor, Variant&& variant) -> decltype(auto)
+				{
+					return std::forward<Visitor>(visitor)(vrt::get<Is>(std::forward<Variant>(variant)));
+				}...
+			};
+		}(std::make_index_sequence<variant_size_v<variant_t>>{});
+
+		return visit_table[var.index()](std::forward<Visitor>(vis), std::forward<Variant>(var));
+	}
 }
