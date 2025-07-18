@@ -1,0 +1,514 @@
+/* this project is part of the vrt project; licensed under the MIT license. see LICENSE for more info */
+
+#pragma once
+
+#include <algorithm>
+#include <new>
+#include <tuple>
+#include <variant>
+
+namespace vrt
+{
+	/** @brief Invalid variant index constant */
+	inline constexpr std::size_t variant_npos = static_cast<std::size_t>(-1);
+
+	/**
+	 * @brief Type-safe union with switch case support and small storage optimization
+	 */
+	template<typename... Ts>
+	class variant
+	{
+		/* note: fold expressions like ((C ? foo() : bar()), ...)
+		 *	execute foo() only when C is true for the matching type */
+		static_assert(sizeof...(Ts) > 0, "variant must have at least one alternative");
+		static_assert((std::is_destructible_v<Ts> && ...), "all alternatives must be destructible");
+
+		/** @brief Small storage threshold */
+		static constexpr std::size_t SMALL_SIZE = 4 * sizeof(void*);
+		/** @brief Small storage alignment */
+		static constexpr std::size_t SMALL_ALIGN = alignof(std::max_align_t);
+		/** @brief Maximum size among all alternatives */
+		static constexpr std::size_t MAX_SIZE = std::max({sizeof(Ts)...});
+		/** @brief Maximum alignment among all alternatives */
+		static constexpr std::size_t MAX_ALIGN = std::max({alignof(Ts)...});
+		/** @brief Whether to use small storage optimization */
+		static constexpr bool USE_SSO = (MAX_SIZE <= SMALL_SIZE) && (MAX_ALIGN <= SMALL_ALIGN);
+
+		/** @brief Storage union for small buffer or heap pointer */
+		union storage_t
+		{
+			alignas(SMALL_ALIGN) char small[SMALL_SIZE];
+			void* heap;
+			storage_t() : small{} {}
+		} storage;
+
+		/** @brief Index of currently active alternative */
+		std::size_t i = 0;
+
+		/** @brief Conditional noexcept specification for move operations */
+		static constexpr bool nothrow_move_constructible = (std::is_nothrow_move_constructible_v<Ts> && ...);
+		/** @brief Conditional noexcept specification for copy operations */
+		static constexpr bool nothrow_copy_constructible = (std::is_nothrow_copy_constructible_v<Ts> && ...);
+
+		template<typename T>
+		static constexpr std::size_t type_index() noexcept
+		{
+			std::size_t idx = 0;
+			std::size_t result = sizeof...(Ts);
+			((std::is_same_v<T, Ts> ? (result = idx, 0) : ++idx), ...);
+			return result;
+		}
+
+		template<typename T>
+		static constexpr bool is_small() noexcept
+		{
+			/* use SSO if all types fit or per type decision if mixed sizes */
+			return USE_SSO || (sizeof(T) <= SMALL_SIZE && alignof(T) <= SMALL_ALIGN);
+		}
+
+		template<typename T>
+		T* ptr() noexcept
+		{
+			if constexpr (is_small<T>())
+				return std::launder(reinterpret_cast<T*>(storage.small));
+			else
+				return static_cast<T*>(storage.heap);
+		}
+
+		template<typename T>
+		const T* ptr() const noexcept
+		{
+			if constexpr (is_small<T>())
+				return std::launder(reinterpret_cast<const T*>(storage.small));
+			else
+				return static_cast<const T*>(storage.heap);
+		}
+
+		template<typename T>
+		void construct(auto&&... args)
+		{
+			if constexpr (is_small<T>())
+				std::construct_at(reinterpret_cast<T*>(storage.small), std::forward<decltype(args)>(args)...);
+			else
+				storage.heap = new T(std::forward<decltype(args)>(args)...);
+		}
+
+		void destroy() noexcept
+		{
+			if (i != variant_npos)
+			{
+				std::size_t idx = 0;
+				((++idx - 1 == i ? destroy_impl<Ts>() : void()), ...);
+			}
+		}
+
+		template<typename T>
+		void destroy_impl() noexcept
+		{
+			if constexpr (is_small<T>())
+				ptr<T>()->~T();
+			else
+			{
+				delete static_cast<T*>(storage.heap);
+				storage.heap = nullptr;
+			}
+		}
+
+		template<typename T>
+		void copy_construct(const variant& other)
+		{
+			construct<T>(*other.ptr<T>());
+		}
+
+		template<typename T>
+		void move_construct(variant&& other)
+		{
+			if constexpr (is_small<T>())
+				construct<T>(std::move(*other.ptr<T>()));
+			else
+			{
+				storage.heap = other.storage.heap;
+				other.storage.heap = nullptr;
+			}
+		}
+
+		/* the 3-pointer threshold is chosen as a balance between stack usage
+		 * and heap allocation frequency. 32 bytes on 64-bit systems is large enough
+		 * to hold most value types i.e. int, double, small strings or pointers while
+		 * being reasonable with the variant size. larger objects like big strings or
+		 * vectors go to the heap to avoid excessive stack consumption.
+		 *
+		 * SSO storage eliminates heap allocations for small types entirely,
+		 * improving cache locality and reducing allocation overhead. mixed small/large
+		 * variants use per-type decisions to optimize each alternative individually.
+		 *
+		 * field ordering prioritizes the most frequently accessed members:
+		 * `storage` is accessed on every get/set operation, `i` is checked
+		 * for every operation to determine the active alternative. the static
+		 * constants are compile-time only and don't affect runtime layout */
+
+	public:
+		/** @brief Compile-time type index constants for switch statements */
+		template<typename T>
+		static constexpr std::size_t index_of = type_index<T>();
+
+		/** @brief Default constructor - constructs first alternative */
+		variant() noexcept(std::is_nothrow_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>)
+			requires std::is_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>
+		{
+			using first_t = std::tuple_element_t<0, std::tuple<Ts...>>;
+			construct<first_t>();
+			i = 0;
+		}
+
+		/** @brief Converting constructor with perfect forwarding */
+		template<typename T>
+			requires((std::is_same_v<std::decay_t<T>, Ts> || ...) &&
+			         !std::is_same_v<std::decay_t<T>, variant> &&
+			         std::is_constructible_v<std::decay_t<T>, T>)
+		variant(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
+		{
+			using type = std::decay_t<T>;
+			construct<type>(std::forward<T>(t));
+			i = type_index<type>();
+		}
+
+		/** @brief Copy constructor */
+		variant(const variant& other) noexcept(nothrow_copy_constructible)
+			: i(other.i)
+		{
+			if (i != variant_npos)
+			{
+				std::size_t idx = 0;
+				((++idx - 1 == i ? copy_construct<Ts>(other) : void()), ...);
+			}
+		}
+
+		/** @brief Move constructor */
+		variant(variant&& other) noexcept(nothrow_move_constructible)
+			: i(other.i)
+		{
+			if (i != variant_npos)
+			{
+				std::size_t idx = 0;
+				((++idx - 1 == i ? move_construct<Ts>(std::move(other)) : void()), ...);
+			}
+			other.i = variant_npos;
+		}
+
+		/** @brief Copy assignment operator */
+		variant& operator=(const variant& other) noexcept(nothrow_copy_constructible)
+		{
+			if (this != &other)
+			{
+				destroy();
+				i = other.i;
+				if (i != variant_npos)
+				{
+					std::size_t idx = 0;
+					((++idx - 1 == i ? copy_construct<Ts>(other) : void()), ...);
+				}
+			}
+			return *this;
+		}
+
+		/** @brief Move assignment operator */
+		variant& operator=(variant&& other) noexcept(nothrow_move_constructible)
+		{
+			if (this != &other)
+			{
+				destroy();
+				i = other.i;
+				if (i != variant_npos)
+				{
+					std::size_t idx = 0;
+					((++idx - 1 == i ? move_construct<Ts>(std::move(other)) : void()), ...);
+				}
+				other.i = variant_npos;
+			}
+			return *this;
+		}
+
+		/** @brief Converting assignment operator */
+		template<typename T>
+			requires((std::is_same_v<std::decay_t<T>, Ts> || ...) &&
+			         !std::is_same_v<std::decay_t<T>, variant> &&
+			         std::is_constructible_v<std::decay_t<T>, T>)
+		variant& operator=(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
+		{
+			using type = std::decay_t<T>;
+			destroy();
+			construct<type>(std::forward<T>(t));
+			i = type_index<type>();
+			return *this;
+		}
+
+		/** @brief Destructor */
+		~variant()
+		{
+			destroy();
+		}
+
+		/** @brief Get the index of the currently active alternative */
+		[[nodiscard]] constexpr std::size_t index() const noexcept
+		{
+			return i;
+		}
+
+		/** @brief Check if the variant is in an invalid state */
+		[[nodiscard]] constexpr bool valueless_by_exception() const noexcept
+		{
+			return i == variant_npos;
+		}
+
+		/** @brief Implicit conversion to size_t for switch statements */
+		constexpr operator std::size_t() const noexcept
+		{
+			return i;
+		}
+
+		/** @brief Construct a value of type T in place */
+		template<typename T, typename... Args>
+			requires((std::is_same_v<T, Ts> || ...) && std::is_constructible_v<T, Args...>)
+		T& emplace(Args&&... args)
+		{
+			destroy();
+			construct<T>(std::forward<Args>(args)...);
+			i = type_index<T>();
+			return *ptr<T>();
+		}
+
+		/** @brief Construct a value of the I-th alternative in place */
+		template<std::size_t I, typename... Args>
+			requires(I < sizeof...(Ts))
+		auto& emplace(Args&&... args)
+		{
+			using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+			return emplace<type>(std::forward<Args>(args)...);
+		}
+
+		/** @brief Swap contents with another variant */
+		void swap(variant& other) noexcept(nothrow_move_constructible)
+		{
+			if (this == &other) return;
+
+			variant temp = std::move(*this);
+			*this = std::move(other);
+			other = std::move(temp);
+		}
+
+		/** @brief Check if the variant currently holds a value of type T */
+		template<typename T>
+		[[nodiscard]] constexpr bool holds_alternative() const noexcept
+		{
+			return i == type_index<T>();
+		}
+
+		/** @brief Get a reference to the contained value of type T */
+		template<typename T>
+		T& get()
+		{
+			if (!holds_alternative<T>())
+				throw std::bad_variant_access();
+			return *ptr<T>();
+		}
+
+		/** @brief Get a const reference to the contained value of type T */
+		template<typename T>
+		const T& get() const
+		{
+			if (!holds_alternative<T>())
+				throw std::bad_variant_access();
+			return *ptr<T>();
+		}
+
+		/** @brief Get a pointer to the contained value of type T, or nullptr */
+		template<typename T>
+		T* get_if() noexcept
+		{
+			return holds_alternative<T>() ? ptr<T>() : nullptr;
+		}
+
+		/** @brief Get a const pointer to the contained value of type T, or nullptr */
+		template<typename T>
+		const T* get_if() const noexcept
+		{
+			return holds_alternative<T>() ? ptr<T>() : nullptr;
+		}
+	};
+
+	/** @brief Check if variant holds alternative of type T */
+	template<typename T, typename... Ts>
+	constexpr bool holds_alternative(const variant<Ts...>& v) noexcept
+	{
+		return v.template holds_alternative<T>();
+	}
+
+	/** @brief Get reference to contained value of type T */
+	template<typename T, typename... Ts>
+	constexpr T& get(variant<Ts...>& v)
+	{
+		return v.template get<T>();
+	}
+
+	/** @brief Get const reference to contained value of type T */
+	template<typename T, typename... Ts>
+	constexpr const T& get(const variant<Ts...>& v)
+	{
+		return v.template get<T>();
+	}
+
+	/** @brief Get rvalue reference to contained value of type T */
+	template<typename T, typename... Ts>
+	constexpr T&& get(variant<Ts...>&& v)
+	{
+		return std::move(v.template get<T>());
+	}
+
+	/** @brief Get const rvalue reference to contained value of type T */
+	template<typename T, typename... Ts>
+	constexpr const T&& get(const variant<Ts...>&& v)
+	{
+		return std::move(v.template get<T>());
+	}
+
+	/** @brief Get reference to I-th alternative */
+	template<std::size_t I, typename... Ts>
+	constexpr auto& get(variant<Ts...>& v)
+	{
+		using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+		return get<type>(v);
+	}
+
+	/** @brief Get const reference to I-th alternative */
+	template<std::size_t I, typename... Ts>
+	constexpr const auto& get(const variant<Ts...>& v)
+	{
+		using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+		return get<type>(v);
+	}
+
+	/** @brief Get rvalue reference to I-th alternative */
+	template<std::size_t I, typename... Ts>
+	constexpr auto&& get(variant<Ts...>&& v)
+	{
+		using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+		return get<type>(std::move(v));
+	}
+
+	/** @brief Get const rvalue reference to I-th alternative */
+	template<std::size_t I, typename... Ts>
+	constexpr const auto&& get(const variant<Ts...>&& v)
+	{
+		using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+		return get<type>(std::move(v));
+	}
+
+	/** @brief Get pointer to contained value of type T, or nullptr */
+	template<typename T, typename... Ts>
+	constexpr T* get_if(variant<Ts...>* v) noexcept
+	{
+		return v ? v->template get_if<T>() : nullptr;
+	}
+
+	/** @brief Get const pointer to contained value of type T, or nullptr */
+	template<typename T, typename... Ts>
+	constexpr const T* get_if(const variant<Ts...>* v) noexcept
+	{
+		return v ? v->template get_if<T>() : nullptr;
+	}
+
+	/** @brief Get pointer to I-th alternative, or nullptr */
+	template<std::size_t I, typename... Ts>
+	constexpr auto* get_if(variant<Ts...>* v) noexcept
+	{
+		using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+		return get_if<type>(v);
+	}
+
+	/** @brief Get const pointer to I-th alternative, or nullptr */
+	template<std::size_t I, typename... Ts>
+	constexpr const auto* get_if(const variant<Ts...>* v) noexcept
+	{
+		using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+		return get_if<type>(v);
+	}
+
+	/** @brief Swap two variants */
+	template<typename... Ts>
+	void swap(variant<Ts...>& lhs, variant<Ts...>& rhs) noexcept(noexcept(lhs.swap(rhs)))
+	{
+		lhs.swap(rhs);
+	}
+
+	/** @brief Equality comparison */
+	template<typename... Ts>
+	constexpr bool operator==(const variant<Ts...>& lhs, const variant<Ts...>& rhs)
+	{
+		if (lhs.index() != rhs.index())
+			return false;
+		if (lhs.valueless_by_exception())
+			return true;
+
+		std::size_t idx = 0;
+		return ((++idx - 1  == lhs.index() ? (lhs.template get<Ts>() == rhs.template get<Ts>()) : false) || ...);
+	}
+
+	/** @brief Inequality comparison */
+	template<typename... Ts>
+	constexpr bool operator!=(const variant<Ts...>& lhs, const variant<Ts...>& rhs)
+	{
+		return !(lhs == rhs);
+	}
+
+	/** @brief Three-way comparison */
+	template<typename... Ts>
+	constexpr auto operator<=>(const variant<Ts...>& lhs, const variant<Ts...>& rhs)
+	{
+		using comparison_t = std::common_comparison_category_t<std::compare_three_way_result_t<Ts>...>;
+
+		if (lhs.valueless_by_exception() && rhs.valueless_by_exception())
+			return comparison_t::equivalent;
+		if (lhs.valueless_by_exception())
+			return comparison_t::less;
+		if (rhs.valueless_by_exception())
+			return comparison_t::greater;
+		if (auto cmp = lhs.index() <=> rhs.index(); cmp != 0)
+			return static_cast<comparison_t>(cmp);
+
+		std::size_t idx = 0;
+		comparison_t result = comparison_t::equivalent;
+
+		/* we use a fold expression to compare each alternative
+		 * in the order they are defined; the matching index
+		 * will perform the actual comparison operation;
+		 * wrap the result in `void()` to avoid warnings */
+		((void(++idx - 1 == lhs.index() ? void(result = lhs.template get<Ts>() <=> rhs.template get<Ts>()) : void())), ...);
+		return result;
+	}
+
+	/** @brief Get the number of alternatives in a variant */
+	template<typename T>
+	struct variant_size;
+
+	template<typename... Ts>
+	struct variant_size<variant<Ts...>> : std::integral_constant<std::size_t, sizeof...(Ts)> {};
+
+	/** @brief Convenience variable template for variant_size */
+	template<typename T>
+	inline constexpr std::size_t variant_size_v = variant_size<T>::value;
+
+	/** @brief Get the type of the I-th alternative */
+	template<std::size_t I, typename T>
+	struct variant_alternative;
+
+	template<std::size_t I, typename... Ts>
+	struct variant_alternative<I, variant<Ts...>>
+	{
+		using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+	};
+
+	/** @brief Convenience alias template for variant_alternative */
+	template<std::size_t I, typename T>
+	using variant_alternative_t = typename variant_alternative<I, T>::type;
+}
