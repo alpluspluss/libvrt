@@ -63,10 +63,10 @@ cases significantly outperform the standard library.
 
 | Operation         | std::visit | vrt::visit     | vrt::switch    |
 |-------------------|------------|----------------|----------------|
-| Small variants    | 142M ops/s | **651M ops/s** | **704M ops/s** |
-| Mixed variants    | 300M ops/s | **862M ops/s** | **724M ops/s** |
-| Many variants     | 262M ops/s | **430M ops/s** | **417M ops/s** |
-| Single operations | 1.55ns     | **0.52ns**     | **0.51ns**     |
+| Small variants    | 121M ops/s | **645M ops/s** | **722M ops/s** |
+| Mixed variants    | 127M ops/s | **785M ops/s** | **730M ops/s** |
+| Many variants     | 255M ops/s | **354M ops/s** | **423M ops/s** |
+| Single operations | 1.98ns     | **0.51ns**     | **0.51ns**     |
 
 See the [benchmark results](assets/bench-results.json) for raw performance analysis.
 
@@ -255,15 +255,6 @@ auto process = [](const variant_t& v)
     }
 };
 ```
-
-> [!NOTE]
-> `vrt::variant` uses small storage optimization (SSO) to minimize heap allocations. Types
-> up to 32 bytes are stored inline within the variant object. When a variant contains
-> types larger than 32 bytes, only those oversized types are heap-allocated while smaller
-> types remain inline.
->
-> Operations are noexcept whenever possible and heap objects transfer ownership to the variant without
-> any copy operations or deallocation.
 
 ### CMake Build Options
 

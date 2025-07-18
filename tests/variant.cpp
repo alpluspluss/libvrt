@@ -300,24 +300,6 @@ TEST_F(VariantTest, RValueGetOverloads)
 	EXPECT_EQ(moved2, "rvalue");
 }
 
-TEST_F(VariantTest, SmallObjectsUseStackStorage)
-{
-	vrt::variant<int, double> small_variant { 42 };
-
-	EXPECT_LE(sizeof(small_variant), 64);
-}
-
-TEST_F(VariantTest, LargeObjectsUseHeapStorage)
-{
-	struct large_type
-	{
-		char data[1000];
-	};
-	vrt::variant<int, large_type> large_variant { 42 };
-
-	EXPECT_LE(sizeof(large_variant), 64);
-}
-
 TEST_F(VariantTest, SameTypeMultipleTimes)
 {
 	vrt::variant<int, int, double> v { 42 };
@@ -331,9 +313,9 @@ TEST_F(VariantTest, VisitFunction)
 {
 	test_variant v = 42;
 
-	auto visitor = [](auto &&arg) -> std::string
+	auto visitor = []<typename T>(T &&arg) -> std::string
 	{
-		using T = std::decay_t<decltype(arg)>;
+		using T = std::decay_t<T>;
 		if constexpr (std::is_same_v<T, int>)
 			return "int: " + std::to_string(arg);
 		else if constexpr (std::is_same_v<T, double>)

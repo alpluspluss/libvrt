@@ -13,7 +13,7 @@ namespace vrt
 	inline constexpr std::size_t variant_npos = static_cast<std::size_t>(-1);
 
 	/**
-	 * @brief Type-safe union with switch case support and small storage optimization
+	 * @brief Type-safe union with switch case support
 	 */
 	template<typename... Ts>
 	class variant
@@ -23,24 +23,13 @@ namespace vrt
 		static_assert(sizeof...(Ts) > 0, "variant must have at least one alternative");
 		static_assert((std::is_destructible_v<Ts> && ...), "all alternatives must be destructible");
 
-		/** @brief Small storage threshold */
-		static constexpr std::size_t SMALL_SIZE = 4 * sizeof(void*);
-		/** @brief Small storage alignment */
-		static constexpr std::size_t SMALL_ALIGN = alignof(std::max_align_t);
 		/** @brief Maximum size among all alternatives */
 		static constexpr std::size_t MAX_SIZE = std::max({sizeof(Ts)...});
 		/** @brief Maximum alignment among all alternatives */
 		static constexpr std::size_t MAX_ALIGN = std::max({alignof(Ts)...});
-		/** @brief Whether to use small storage optimization */
-		static constexpr bool USE_SSO = (MAX_SIZE <= SMALL_SIZE) && (MAX_ALIGN <= SMALL_ALIGN);
 
-		/** @brief Storage union for small buffer or heap pointer */
-		union storage_t
-		{
-			alignas(SMALL_ALIGN) char small[SMALL_SIZE];
-			void* heap;
-			storage_t() : small{} {}
-		} storage;
+		/** @brief Storage for the variant data */
+		alignas(MAX_ALIGN) char storage[MAX_SIZE];
 
 		/** @brief Index of currently active alternative */
 		std::size_t i = 0;
@@ -60,37 +49,21 @@ namespace vrt
 		}
 
 		template<typename T>
-		static constexpr bool is_small() noexcept
-		{
-			/* use SSO if all types fit or per type decision if mixed sizes */
-			return USE_SSO || (sizeof(T) <= SMALL_SIZE && alignof(T) <= SMALL_ALIGN);
-		}
-
-		template<typename T>
 		T* ptr() noexcept
 		{
-			if constexpr (is_small<T>())
-				return std::launder(reinterpret_cast<T*>(storage.small));
-			else
-				return static_cast<T*>(storage.heap);
+			return std::launder(reinterpret_cast<T*>(storage));
 		}
 
 		template<typename T>
 		const T* ptr() const noexcept
 		{
-			if constexpr (is_small<T>())
-				return std::launder(reinterpret_cast<const T*>(storage.small));
-			else
-				return static_cast<const T*>(storage.heap);
+			return std::launder(reinterpret_cast<const T*>(storage));
 		}
 
 		template<typename T>
 		void construct(auto&&... args)
 		{
-			if constexpr (is_small<T>())
-				std::construct_at(reinterpret_cast<T*>(storage.small), std::forward<decltype(args)>(args)...);
-			else
-				storage.heap = new T(std::forward<decltype(args)>(args)...);
+			std::construct_at(reinterpret_cast<T*>(storage), std::forward<decltype(args)>(args)...);
 		}
 
 		void destroy() noexcept
@@ -105,13 +78,7 @@ namespace vrt
 		template<typename T>
 		void destroy_impl() noexcept
 		{
-			if constexpr (is_small<T>())
-				ptr<T>()->~T();
-			else
-			{
-				delete static_cast<T*>(storage.heap);
-				storage.heap = nullptr;
-			}
+			ptr<T>()->~T();
 		}
 
 		template<typename T>
@@ -123,29 +90,8 @@ namespace vrt
 		template<typename T>
 		void move_construct(variant&& other)
 		{
-			if constexpr (is_small<T>())
-				construct<T>(std::move(*other.ptr<T>()));
-			else
-			{
-				storage.heap = other.storage.heap;
-				other.storage.heap = nullptr;
-			}
+			construct<T>(std::move(*other.ptr<T>()));
 		}
-
-		/* the 3-pointer threshold is chosen as a balance between stack usage
-		 * and heap allocation frequency. 32 bytes on 64-bit systems is large enough
-		 * to hold most value types i.e. int, double, small strings or pointers while
-		 * being reasonable with the variant size. larger objects like big strings or
-		 * vectors go to the heap to avoid excessive stack consumption.
-		 *
-		 * SSO storage eliminates heap allocations for small types entirely,
-		 * improving cache locality and reducing allocation overhead. mixed small/large
-		 * variants use per-type decisions to optimize each alternative individually.
-		 *
-		 * field ordering prioritizes the most frequently accessed members:
-		 * `storage` is accessed on every get/set operation, `i` is checked
-		 * for every operation to determine the active alternative. the static
-		 * constants are compile-time only and don't affect runtime layout */
 
 	public:
 		/** @brief Compile-time type index constants for switch statements */
