@@ -545,7 +545,11 @@ namespace vrt
 		else
 		{
 			/* note: this path should never be reached due to the check above */
+#ifdef __GNUC__
 			__builtin_unreachable();
+#elif defined(_MSC_VER)
+			__assume(false);
+#endif
 		}
 	}
 }
