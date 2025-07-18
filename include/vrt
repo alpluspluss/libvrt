@@ -3,7 +3,6 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <new>
 #include <tuple>
 #include <variant>
@@ -153,7 +152,7 @@ namespace vrt
 		template<typename T>
 		static constexpr std::size_t of = type_index<T>();
 
-		/** @brief Default constructor - constructs first alternative */
+		/** @brief Default constructor; constructs first alternative */
 		variant() noexcept(std::is_nothrow_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>)
 			requires std::is_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>
 		{
@@ -515,16 +514,35 @@ namespace vrt
 			throw std::bad_variant_access();
 
 		using variant_t = std::decay_t<Variant>;
-		constexpr auto visit_table = []<std::size_t... Is>(std::index_sequence<Is...>)
-		{
-			return std::array {
-				+[](Visitor&& visitor, Variant&& variant) -> decltype(auto)
-				{
-					return std::forward<Visitor>(visitor)(vrt::get<Is>(std::forward<Variant>(variant)));
-				}...
-			};
-		}(std::make_index_sequence<variant_size_v<variant_t>>{});
+		constexpr std::size_t variant_size = variant_size_v<variant_t>;
 
-		return visit_table[var.index()](std::forward<Visitor>(vis), std::forward<Variant>(var));
+		/* this is a silly little thing we shouldn't do in modern C++
+		 * but it's okay as we gain around 7x performance improvement
+		 * as of https://github.com/alpluspluss/libvrt/blob/e61201e664673d3c68a477690d3904ae1b526665/include/vrt#L512 */
+		return visit_recursive<0, variant_size>(
+			std::forward<Visitor>(vis),
+			std::forward<Variant>(var)
+		);
+	}
+
+	/** @brief Recursive template implementation for visit */
+	template<std::size_t I, std::size_t N, typename Visitor, typename Variant>
+	constexpr decltype(auto) visit_recursive(Visitor&& vis, Variant&& var)
+	{
+		if (var.index() == I)
+			return std::forward<Visitor>(vis)(vrt::get<I>(std::forward<Variant>(var)));
+
+		if constexpr (I + 1 < N)
+		{
+			return visit_recursive<I + 1, N>(
+				std::forward<Visitor>(vis),
+				std::forward<Variant>(var)
+			);
+		}
+		else
+		{
+			/* note: this path should never be reached due to the check above */
+			__builtin_unreachable();
+		}
 	}
 }
