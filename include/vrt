@@ -157,6 +157,23 @@ namespace vrt
 			i = type_index<T>();
 		}
 
+#if __cplusplus >= 202600L
+		/** @brief In-place constructor by type with initializer_list */
+		template<typename T, typename U, typename... Args>
+			requires((std::is_same_v<T, Ts> || ...) &&
+					 std::is_constructible_v<T, std::initializer_list<U>&, Args...>)
+		variant(std::in_place_type_t<T>, std::initializer_list<U> il, Args&&... args)
+			noexcept(std::is_nothrow_constructible_v<T, std::initializer_list<U>&, Args...>)
+			: i(variant_npos) /* start invalid for exception safety */
+		{
+			/* if in-place construction throws, `*this` will remain in valid empty state
+			 * rather than having a valid index with uninitialized storage */
+			construct<T>(il, std::forward<Args>(args)...);
+			/* only set valid index after successful construction */
+			i = type_index<T>();
+		}
+#endif
+
 		/** @brief In-place constructor by index */
 		template<std::size_t I, typename... Args>
 			requires(I < sizeof...(Ts))
@@ -172,6 +189,26 @@ namespace vrt
 			/* only set valid index after successful construction */
 			i = I;
 		}
+
+#if __cplusplus >= 202600L
+		/** @brief In-place constructor by index with initializer_list */
+		template<std::size_t I, typename U, typename... Args>
+			requires(I < sizeof...(Ts))
+		variant(std::in_place_index_t<I>, std::initializer_list<U> il, Args&&... args)
+			noexcept(std::is_nothrow_constructible_v<std::tuple_element_t<I, std::tuple<Ts...>>,
+												   std::initializer_list<U>&, Args...>)
+			: i(variant_npos) /* start invalid for exception safety */
+		{
+			/* if in-place construction throws, `*this` will remain in valid empty state
+			 * rather than having a valid index with uninitialized storage */
+			using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+			static_assert(std::is_constructible_v<type, std::initializer_list<U>&, Args...>,
+						  "Type must be constructible from initializer_list and provided arguments");
+			construct<type>(il, std::forward<Args>(args)...);
+			/* only set valid index after successful construction */
+			i = I;
+		}
+#endif
 
 		/** @brief Copy constructor */
 		variant(const variant& other) noexcept(nothrow_copy_constructible)
@@ -278,6 +315,29 @@ namespace vrt
 			using type = std::tuple_element_t<I, std::tuple<Ts...>>;
 			return emplace<type>(std::forward<Args>(args)...);
 		}
+
+#if __cplusplus >= 202600L
+		/** @brief Construct a value of type T in place with initializer_list */
+		template<typename T, typename U, typename... Args>
+			requires((std::is_same_v<T, Ts> || ...) &&
+					 std::is_constructible_v<T, std::initializer_list<U>&, Args...>)
+		T& emplace(std::initializer_list<U> il, Args&&... args)
+		{
+			destroy();
+			construct<T>(il, std::forward<Args>(args)...);
+			i = type_index<T>();
+			return *ptr<T>();
+		}
+
+		/** @brief Construct a value of the I-th alternative in place with initializer_list */
+		template<std::size_t I, typename U, typename... Args>
+			requires(I < sizeof...(Ts))
+		auto& emplace(std::initializer_list<U> il, Args&&... args)
+		{
+			using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+			return emplace<type>(il, std::forward<Args>(args)...);
+		}
+#endif
 
 		/** @brief Swap contents with another variant */
 		void swap(variant& other) noexcept(nothrow_move_constructible)
