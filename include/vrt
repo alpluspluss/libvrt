@@ -678,6 +678,30 @@ namespace vrt
 #endif
 		}
 	}
+
+	/** @brief Pattern matching builder for clean syntax */
+	template<typename Variant>
+		class match_builder
+	{
+	public:
+		constexpr match_builder(Variant&& v) : var(std::forward<Variant>(v)) {}
+
+		template<typename Lambda>
+		constexpr auto operator|(Lambda&& lambda)
+		{
+			return lambda(std::forward<Variant>(var));
+		}
+
+	private:
+		Variant&& var;
+	};
+
+	/** @brief Create a pattern match builder */
+	template<typename Variant>
+	constexpr auto match(Variant&& v)
+	{
+		return match_builder{std::forward<Variant>(v)};
+	}
 }
 
 /* standard library integration;
