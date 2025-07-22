@@ -53,6 +53,7 @@ jobs:
                 -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}     \
                 -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}         \
                 -DLIBVRT_BUILD_TESTS=ON                             \
+                -DLIBVRT_BUILD_BENCHMARKS=OFF                       \
                 -S ${{ github.workspace }}
 
       - name: Build
