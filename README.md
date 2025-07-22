@@ -1,7 +1,13 @@
 <div align="center">
     <img src="assets/vrt-logo.png" alt="Logo" width="35%">
     <h1>vrt</h1>
-    <p>Make variants switchable again</p>
+    <p><i>Make variants switchable again</i></p>
+    <p>
+        <img src="https://img.shields.io/github/v/release/alpluspluss/libvrt" alt="Release">
+        <img src="https://img.shields.io/badge/C%2B%2B-20-00599C.svg" alt="C++ Version">
+        <img src="https://github.com/alpluspluss/libvrt/actions/workflows/build.yml/badge.svg" alt="Build & Unit Tests">
+        <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
+    </p>
 </div>
 
 ## Why `vrt`?
@@ -253,6 +259,29 @@ auto process = [](const variant_t& v)
             return "got string: " + vrt::get<std::string>(v);
         default:
             return "empty variant";
+    }
+};
+```
+
+### Pattern Matching
+
+The library provides you a pattern matching syntax that makes variant handling
+more expressive and concise.
+
+```cpp
+using Value = vrt::variant<int, double, std::string>;
+Value v = 42;
+
+auto result = vrt::match(v) | [](auto&& variant) -> std::string 
+{
+    switch (variant.index()) 
+    {
+        case Value::of<int>:
+            return "integer: " + std::to_string(variant.get<int>());
+        case Value::of<double>:
+            return "double: " + std::to_string(variant.get<double>());
+        case Value::of<std::string>:
+            return "string: " + variant.get<std::string>();
     }
 };
 ```
