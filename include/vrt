@@ -116,7 +116,7 @@ namespace vrt
 		static constexpr std::size_t of = type_index<T>();
 
 		/** @brief Default constructor; constructs first alternative */
-		variant() noexcept(std::is_nothrow_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>)
+		constexpr variant() noexcept(std::is_nothrow_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>)
 			requires(std::is_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
@@ -133,7 +133,7 @@ namespace vrt
 			requires((std::is_same_v<std::decay_t<T>, Ts> || ...) &&
 			         !std::is_same_v<std::decay_t<T>, variant> &&
 			         std::is_constructible_v<std::decay_t<T>, T>)
-		variant(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
+		constexpr variant(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
 			/* if construction of `T` throws, `*this` will remain in valid empty state
@@ -147,7 +147,7 @@ namespace vrt
 		/** @brief In-place constructor by type */
 		template<typename T, typename... Args>
 			requires((std::is_same_v<T, Ts> || ...) && std::is_constructible_v<T, Args...>)
-		variant(std::in_place_type_t<T>, Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args...>)
+		constexpr explicit variant(std::in_place_type_t<T>, Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args...>)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
 			/* if in-place construction throws, `*this` will remain in valid empty state
@@ -162,7 +162,7 @@ namespace vrt
 		template<typename T, typename U, typename... Args>
 			requires((std::is_same_v<T, Ts> || ...) &&
 					 std::is_constructible_v<T, std::initializer_list<U>&, Args...>)
-		variant(std::in_place_type_t<T>, std::initializer_list<U> il, Args&&... args)
+		constexpr explicit variant(std::in_place_type_t<T>, std::initializer_list<U> il, Args&&... args)
 			noexcept(std::is_nothrow_constructible_v<T, std::initializer_list<U>&, Args...>)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
@@ -177,7 +177,7 @@ namespace vrt
 		/** @brief In-place constructor by index */
 		template<std::size_t I, typename... Args>
 			requires(I < sizeof...(Ts))
-		variant(std::in_place_index_t<I>, Args&&... args)
+		constexpr explicit variant(std::in_place_index_t<I>, Args&&... args)
 			noexcept(std::is_nothrow_constructible_v<std::tuple_element_t<I, std::tuple<Ts...>>, Args...>)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
@@ -194,7 +194,7 @@ namespace vrt
 		/** @brief In-place constructor by index with initializer_list */
 		template<std::size_t I, typename U, typename... Args>
 			requires(I < sizeof...(Ts))
-		variant(std::in_place_index_t<I>, std::initializer_list<U> il, Args&&... args)
+		constexpr explicit variant(std::in_place_index_t<I>, std::initializer_list<U> il, Args&&... args)
 			noexcept(std::is_nothrow_constructible_v<std::tuple_element_t<I, std::tuple<Ts...>>,
 												   std::initializer_list<U>&, Args...>)
 			: i(variant_npos) /* start invalid for exception safety */
@@ -211,7 +211,7 @@ namespace vrt
 #endif
 
 		/** @brief Copy constructor */
-		variant(const variant& other) noexcept(nothrow_copy_constructible)
+		constexpr variant(const variant& other) noexcept(nothrow_copy_constructible)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
 			/* if the copy construction throws, `*this` would remain in a valid empty
@@ -227,7 +227,7 @@ namespace vrt
 		}
 
 		/** @brief Move constructor */
-		variant(variant&& other) noexcept(nothrow_move_constructible)
+		constexpr variant(variant&& other) noexcept(nothrow_move_constructible)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
 			if (other.i != variant_npos)
@@ -241,7 +241,7 @@ namespace vrt
 		}
 
 		/** @brief Copy assignment operator */
-		variant& operator=(const variant& other)
+		constexpr variant& operator=(const variant& other)
 		{
 			if (this != &other)
 			{
@@ -252,7 +252,7 @@ namespace vrt
 		}
 
 		/** @brief Move assignment operator */
-		variant& operator=(variant&& other) noexcept(nothrow_move_constructible)
+		constexpr variant& operator=(variant&& other) noexcept(nothrow_move_constructible)
 		{
 			if (this != &other)
 			{
@@ -267,7 +267,7 @@ namespace vrt
 			requires((std::is_same_v<std::decay_t<T>, Ts> || ...) &&
 			         !std::is_same_v<std::decay_t<T>, variant> &&
 			         std::is_constructible_v<std::decay_t<T>, T>)
-		variant& operator=(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
+		constexpr variant& operator=(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
 		{
 			/* this is for single values, not variant-to-variant assignment. therefore
 			 * there would be no risk of partial state since it would be destroyed first the contruct */
@@ -279,7 +279,7 @@ namespace vrt
 		}
 
 		/** @brief Destructor */
-		~variant()
+		constexpr ~variant()
 		{
 			destroy();
 		}
@@ -299,7 +299,7 @@ namespace vrt
 		/** @brief Construct a value of type T in place */
 		template<typename T, typename... Args>
 			requires((std::is_same_v<T, Ts> || ...) && std::is_constructible_v<T, Args...>)
-		T& emplace(Args&&... args)
+		constexpr T& emplace(Args&&... args)
 		{
 			destroy();
 			construct<T>(std::forward<Args>(args)...);
@@ -310,7 +310,7 @@ namespace vrt
 		/** @brief Construct a value of the I-th alternative in place */
 		template<std::size_t I, typename... Args>
 			requires(I < sizeof...(Ts))
-		auto& emplace(Args&&... args)
+		constexpr auto& emplace(Args&&... args)
 		{
 			using type = std::tuple_element_t<I, std::tuple<Ts...>>;
 			return emplace<type>(std::forward<Args>(args)...);
@@ -340,7 +340,7 @@ namespace vrt
 #endif
 
 		/** @brief Swap contents with another variant */
-		void swap(variant& other) noexcept(nothrow_move_constructible)
+		constexpr void swap(variant& other) noexcept(nothrow_move_constructible)
 		{
 			if (this == &other)
 				return;
@@ -681,7 +681,7 @@ namespace vrt
 
 	/** @brief Pattern matching builder for clean syntax */
 	template<typename Variant>
-		class match_builder
+	class match_builder
 	{
 	public:
 		constexpr match_builder(Variant&& v) : var(std::forward<Variant>(v)) {}

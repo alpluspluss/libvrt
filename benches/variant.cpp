@@ -2,97 +2,124 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include <array>
 #include <vrt>
 #include <benchmark/benchmark.h>
 
-struct small_type
+struct trivial_small
 {
 	int value;
 };
 
-struct medium_type
+struct non_trivial_small
 {
-	char data[64];
-	int value;
+	std::unique_ptr<int> ptr;
+
+	non_trivial_small() : ptr(std::make_unique<int>(0)) {}
+	non_trivial_small(int v) : ptr(std::make_unique<int>(v)) {}
+	non_trivial_small(const non_trivial_small& other) : ptr(std::make_unique<int>(*other.ptr)) {}
+	non_trivial_small& operator=(const non_trivial_small& other)
+	{
+		if (this != &other)
+			ptr = std::make_unique<int>(*other.ptr);
+		return *this;
+	}
+	non_trivial_small(non_trivial_small&&) = default;
+	non_trivial_small& operator=(non_trivial_small&&) = default;
 };
 
-struct large_type
+struct medium_object
 {
-	char data[1024];
-	int value;
+	std::array<int, 16> data;
+	std::string name;
+
+	medium_object() : data{}, name("default") {}
+	medium_object(int val, const std::string& n) : name(n)
+	{
+		data.fill(val);
+	}
 };
 
-using std_variant_small = std::variant<int, double, std::string>;
-using vrt_variant_small = vrt::variant<int, double, std::string>;
-
-using std_variant_mixed = std::variant<small_type, medium_type, large_type>;
-using vrt_variant_mixed = vrt::variant<small_type, medium_type, large_type>;
-
-using std_variant_many = std::variant<int, double, float, char, short, long, std::string, std::vector<int> >;
-using vrt_variant_many = vrt::variant<int, double, float, char, short, long, std::string, std::vector<int> >;
-
-struct visitor
+struct large_object
 {
-	int operator()(int v) const
+	std::array<int, 256> data;
+	std::vector<std::string> strings;
+
+	large_object() : data{}, strings(10, "test") {}
+	large_object(int val) : strings(10, "test")
 	{
-		return v * 2;
+		data.fill(val);
+	}
+};
+
+using std_small_variant = std::variant<int, double, std::string>;
+using vrt_small_variant = vrt::variant<int, double, std::string>;
+
+using std_mixed_variant = std::variant<trivial_small, non_trivial_small, medium_object>;
+using vrt_mixed_variant = vrt::variant<trivial_small, non_trivial_small, medium_object>;
+
+using std_large_variant = std::variant<int, double, std::string, medium_object, large_object>;
+using vrt_large_variant = vrt::variant<int, double, std::string, medium_object, large_object>;
+
+using std_many_variant = std::variant<
+	int, double, float, char, short, long, long long,
+	std::string, std::vector<int>, std::array<int, 4>
+>;
+using vrt_many_variant = vrt::variant<
+	int, double, float, char, short, long, long long,
+	std::string, std::vector<int>, std::array<int, 4>
+>;
+
+struct vvvv
+{
+	template<typename T>
+		requires std::is_arithmetic_v<T>
+	int operator()(T value) const
+	{
+		return static_cast<int>(value) * 2;
 	}
 
-	int operator()(double v) const
+	int operator()(const std::string& str) const
 	{
-		return static_cast<int>(v * 2.0);
+		return static_cast<int>(str.length());
 	}
 
-	int operator()(const std::string &v) const
+	int operator()(const std::vector<int>& vec) const
 	{
-		return static_cast<int>(v.length());
+		return static_cast<int>(vec.size());
 	}
 
-	int operator()(float v) const
+	template<std::size_t N>
+	int operator()(const std::array<int, N>& arr) const
 	{
-		return static_cast<int>(v * 2.0f);
+		return static_cast<int>(N);
 	}
 
-	int operator()(char v) const
+	int operator()(const trivial_small& obj) const
 	{
-		return static_cast<int>(v) * 2;
+		return obj.value * 2;
 	}
 
-	int operator()(short v) const
+	int operator()(const non_trivial_small& obj) const
 	{
-		return static_cast<int>(v) * 2;
+		return *obj.ptr * 2;
 	}
 
-	int operator()(long v) const
+	int operator()(const medium_object& obj) const
 	{
-		return static_cast<int>(v) * 2;
+		return obj.data[0] * 2;
 	}
 
-	int operator()(const std::vector<int> &v) const
+	int operator()(const large_object& obj) const
 	{
-		return static_cast<int>(v.size());
-	}
-
-	int operator()(const small_type &v) const
-	{
-		return v.value * 2;
-	}
-
-	int operator()(const medium_type &v) const
-	{
-		return v.value * 2;
-	}
-
-	int operator()(const large_type &v) const
-	{
-		return v.value * 2;
+		return obj.data[0] * 2;
 	}
 };
 
 template<typename Variant>
-int switch_visit(const Variant &v)
+int switch_visit_impl(const Variant& v)
 {
-	if constexpr (std::is_same_v<Variant, vrt_variant_small>)
+	if constexpr (std::is_same_v<Variant, vrt_small_variant>)
 	{
 		switch (v.index())
 		{
@@ -102,21 +129,43 @@ int switch_visit(const Variant &v)
 				return static_cast<int>(v.template get<double>() * 2.0);
 			case Variant::template of<std::string>:
 				return static_cast<int>(v.template get<std::string>().length());
+			default:
+				return 0;
 		}
 	}
-	else if constexpr (std::is_same_v<Variant, vrt_variant_mixed>)
+	else if constexpr (std::is_same_v<Variant, vrt_mixed_variant>)
 	{
 		switch (v.index())
 		{
-			case Variant::template of<small_type>:
-				return v.template get<small_type>().value * 2;
-			case Variant::template of<medium_type>:
-				return v.template get<medium_type>().value * 2;
-			case Variant::template of<large_type>:
-				return v.template get<large_type>().value * 2;
+			case Variant::template of<trivial_small>:
+				return v.template get<trivial_small>().value * 2;
+			case Variant::template of<non_trivial_small>:
+				return *v.template get<non_trivial_small>().ptr * 2;
+			case Variant::template of<medium_object>:
+				return v.template get<medium_object>().data[0] * 2;
+			default:
+				return 0;
 		}
 	}
-	else if constexpr (std::is_same_v<Variant, vrt_variant_many>)
+	else if constexpr (std::is_same_v<Variant, vrt_large_variant>)
+	{
+		switch (v.index())
+		{
+			case Variant::template of<int>:
+				return v.template get<int>() * 2;
+			case Variant::template of<double>:
+				return static_cast<int>(v.template get<double>() * 2.0);
+			case Variant::template of<std::string>:
+				return static_cast<int>(v.template get<std::string>().length());
+			case Variant::template of<medium_object>:
+				return v.template get<medium_object>().data[0] * 2;
+			case Variant::template of<large_object>:
+				return v.template get<large_object>().data[0] * 2;
+			default:
+				return 0;
+		}
+	}
+	else if constexpr (std::is_same_v<Variant, vrt_many_variant>)
 	{
 		switch (v.index())
 		{
@@ -132,30 +181,37 @@ int switch_visit(const Variant &v)
 				return static_cast<int>(v.template get<short>()) * 2;
 			case Variant::template of<long>:
 				return static_cast<int>(v.template get<long>()) * 2;
+			case Variant::template of<long long>:
+				return static_cast<int>(v.template get<long long>()) * 2;
 			case Variant::template of<std::string>:
 				return static_cast<int>(v.template get<std::string>().length());
-			case Variant::template of<std::vector<int> >:
-				return static_cast<int>(v.template get<std::vector<int> >().size());
+			case Variant::template of<std::vector<int>>:
+				return static_cast<int>(v.template get<std::vector<int>>().size());
+			case Variant::template of<std::array<int, 4>>:
+				return 4;
+			default:
+				return 0;
 		}
 	}
+
 	return 0;
 }
 
 template<typename StdVariant, typename VrtVariant>
-std::pair<std::vector<StdVariant>, std::vector<VrtVariant> > generate_test_data(size_t count)
+std::pair<std::vector<StdVariant>, std::vector<VrtVariant>>
+generate_variants(std::size_t count, unsigned seed = 42)
 {
 	std::vector<StdVariant> std_variants;
 	std::vector<VrtVariant> vrt_variants;
 	std_variants.reserve(count);
 	vrt_variants.reserve(count);
 
-	std::random_device rd;
-	std::mt19937 gen(rd());
+	std::mt19937 gen(seed);
 
-	if constexpr (std::is_same_v<StdVariant, std_variant_small>)
+	if constexpr (std::is_same_v<StdVariant, std_small_variant>)
 	{
 		std::uniform_int_distribution<> dis(0, 2);
-		for (size_t i = 0; i < count; ++i)
+		for (std::size_t i = 0; i < count; ++i)
 		{
 			switch (dis(gen))
 			{
@@ -174,32 +230,62 @@ std::pair<std::vector<StdVariant>, std::vector<VrtVariant> > generate_test_data(
 			}
 		}
 	}
-	else if constexpr (std::is_same_v<StdVariant, std_variant_mixed>)
+	else if constexpr (std::is_same_v<StdVariant, std_mixed_variant>)
 	{
 		std::uniform_int_distribution<> dis(0, 2);
-		for (size_t i = 0; i < count; ++i)
+		for (std::size_t i = 0; i < count; ++i)
 		{
 			switch (dis(gen))
 			{
 				case 0:
-					std_variants.emplace_back(small_type { static_cast<int>(i) });
-					vrt_variants.emplace_back(small_type { static_cast<int>(i) });
+					std_variants.emplace_back(trivial_small{static_cast<int>(i)});
+					vrt_variants.emplace_back(trivial_small{static_cast<int>(i)});
 					break;
 				case 1:
-					std_variants.emplace_back(medium_type { {}, static_cast<int>(i) });
-					vrt_variants.emplace_back(medium_type { {}, static_cast<int>(i) });
+					std_variants.emplace_back(non_trivial_small{static_cast<int>(i)});
+					vrt_variants.emplace_back(non_trivial_small{static_cast<int>(i)});
 					break;
 				case 2:
-					std_variants.emplace_back(large_type { {}, static_cast<int>(i) });
-					vrt_variants.emplace_back(large_type { {}, static_cast<int>(i) });
+					std_variants.emplace_back(medium_object{static_cast<int>(i), "test"});
+					vrt_variants.emplace_back(medium_object{static_cast<int>(i), "test"});
 					break;
 			}
 		}
 	}
-	else if constexpr (std::is_same_v<StdVariant, std_variant_many>)
+	else if constexpr (std::is_same_v<StdVariant, std_large_variant>)
 	{
-		std::uniform_int_distribution<> dis(0, 7);
-		for (size_t i = 0; i < count; ++i)
+		std::uniform_int_distribution<> dis(0, 4);
+		for (std::size_t i = 0; i < count; ++i)
+		{
+			switch (dis(gen))
+			{
+				case 0:
+					std_variants.emplace_back(static_cast<int>(i));
+					vrt_variants.emplace_back(static_cast<int>(i));
+					break;
+				case 1:
+					std_variants.emplace_back(static_cast<double>(i) * 1.5);
+					vrt_variants.emplace_back(static_cast<double>(i) * 1.5);
+					break;
+				case 2:
+					std_variants.emplace_back(std::string("test_") + std::to_string(i));
+					vrt_variants.emplace_back(std::string("test_") + std::to_string(i));
+					break;
+				case 3:
+					std_variants.emplace_back(medium_object{static_cast<int>(i), "test"});
+					vrt_variants.emplace_back(medium_object{static_cast<int>(i), "test"});
+					break;
+				case 4:
+					std_variants.emplace_back(large_object{static_cast<int>(i)});
+					vrt_variants.emplace_back(large_object{static_cast<int>(i)});
+					break;
+			}
+		}
+	}
+	else if constexpr (std::is_same_v<StdVariant, std_many_variant>)
+	{
+		std::uniform_int_distribution<> dis(0, 9);
+		for (std::size_t i = 0; i < count; ++i)
 		{
 			switch (dis(gen))
 			{
@@ -228,340 +314,347 @@ std::pair<std::vector<StdVariant>, std::vector<VrtVariant> > generate_test_data(
 					vrt_variants.emplace_back(static_cast<long>(i));
 					break;
 				case 6:
+					std_variants.emplace_back(static_cast<long long>(i));
+					vrt_variants.emplace_back(static_cast<long long>(i));
+					break;
+				case 7:
 					std_variants.emplace_back(std::string("test_") + std::to_string(i));
 					vrt_variants.emplace_back(std::string("test_") + std::to_string(i));
 					break;
-				case 7:
+				case 8:
 					std_variants.emplace_back(std::vector<int>(i % 10, static_cast<int>(i)));
 					vrt_variants.emplace_back(std::vector<int>(i % 10, static_cast<int>(i)));
 					break;
+				case 9:
+				{
+					std::array<int, 4> arr;
+					arr.fill(static_cast<int>(i));
+					std_variants.emplace_back(arr);
+					vrt_variants.emplace_back(arr);
+					break;
+				}
 			}
 		}
 	}
 
-	return { std_variants, vrt_variants };
+	return {std_variants, vrt_variants};
 }
 
-static void BM_StdVisit_Small(benchmark::State &state)
+template<typename StdVariant, typename VrtVariant>
+static void BM_StdVisit_Pattern(benchmark::State& state)
 {
-	auto [std_variants, vrt_variants] = generate_test_data<std_variant_small, vrt_variant_small>(1000);
-	visitor vis;
+	constexpr std::size_t VARIANT_COUNT = 1000;
+	auto [std_variants, vrt_variants] = generate_variants<StdVariant, VrtVariant>(VARIANT_COUNT);
 
-	for (auto _: state)
+	for (auto _ : state)
 	{
-		for (const auto &v: std_variants)
+		std::size_t sum = 0;
+		for (const auto& v : std_variants)
 		{
-			benchmark::DoNotOptimize(std::visit(vis, v));
+			vvvv visitor;
+			sum += std::visit(visitor, v);
 		}
+		benchmark::DoNotOptimize(sum);
 	}
-	state.SetItemsProcessed(state.iterations() * std_variants.size());
+	state.SetItemsProcessed(state.iterations() * VARIANT_COUNT);
 }
 
-static void BM_VrtSwitch_Small(benchmark::State &state)
+template<typename StdVariant, typename VrtVariant>
+static void BM_VrtVisit_Pattern(benchmark::State& state)
 {
-	auto [std_variants, vrt_variants] = generate_test_data<std_variant_small, vrt_variant_small>(1000);
+	constexpr std::size_t VARIANT_COUNT = 1000;
+	auto [std_variants, vrt_variants] = generate_variants<StdVariant, VrtVariant>(VARIANT_COUNT);
+	vvvv visitor;
 
-	for (auto _: state)
+	for (auto _ : state)
 	{
-		for (const auto &v: vrt_variants)
+		std::size_t sum = 0;
+		for (const auto& v : vrt_variants)
 		{
-			benchmark::DoNotOptimize(switch_visit(v));
+			sum += vrt::visit(visitor, v);
 		}
+		benchmark::DoNotOptimize(sum);
 	}
-	state.SetItemsProcessed(state.iterations() * vrt_variants.size());
+	state.SetItemsProcessed(state.iterations() * VARIANT_COUNT);
 }
 
-static void BM_StdVisit_Mixed(benchmark::State &state)
+template<typename StdVariant, typename VrtVariant>
+static void BM_VrtSwitch_Pattern(benchmark::State& state)
 {
-	auto [std_variants, vrt_variants] = generate_test_data<std_variant_mixed, vrt_variant_mixed>(1000);
-	visitor vis;
+	constexpr std::size_t VARIANT_COUNT = 1000;
+	auto [std_variants, vrt_variants] = generate_variants<StdVariant, VrtVariant>(VARIANT_COUNT);
 
-	for (auto _: state)
+	for (auto _ : state)
 	{
-		for (const auto &v: std_variants)
+		std::size_t sum = 0;
+		for (const auto& v : vrt_variants)
 		{
-			benchmark::DoNotOptimize(std::visit(vis, v));
+			sum += switch_visit_impl(v);
 		}
+		benchmark::DoNotOptimize(sum);
 	}
-	state.SetItemsProcessed(state.iterations() * std_variants.size());
+	state.SetItemsProcessed(state.iterations() * VARIANT_COUNT);
 }
 
-static void BM_VrtSwitch_Mixed(benchmark::State &state)
+template<typename StdVariant>
+static void BM_StdVisit_Single(benchmark::State& state)
 {
-	auto [std_variants, vrt_variants] = generate_test_data<std_variant_mixed, vrt_variant_mixed>(1000);
-
-	for (auto _: state)
-	{
-		for (const auto &v: vrt_variants)
-		{
-			benchmark::DoNotOptimize(switch_visit(v));
-		}
-	}
-	state.SetItemsProcessed(state.iterations() * vrt_variants.size());
-}
-
-static void BM_StdVisit_Many(benchmark::State &state)
-{
-	auto [std_variants, vrt_variants] = generate_test_data<std_variant_many, vrt_variant_many>(1000);
-	visitor vis;
-
-	for (auto _: state)
-	{
-		for (const auto &v: std_variants)
-		{
-			benchmark::DoNotOptimize(std::visit(vis, v));
-		}
-	}
-	state.SetItemsProcessed(state.iterations() * std_variants.size());
-}
-
-static void BM_VrtSwitch_Many(benchmark::State &state)
-{
-	auto [std_variants, vrt_variants] = generate_test_data<std_variant_many, vrt_variant_many>(1000);
-
-	for (auto _: state)
-	{
-		for (const auto &v: vrt_variants)
-		{
-			benchmark::DoNotOptimize(switch_visit(v));
-		}
-	}
-	state.SetItemsProcessed(state.iterations() * vrt_variants.size());
-}
-
-static void BM_StdVisit_Single(benchmark::State &state)
-{
-	std_variant_small v = 42;
-	visitor vis;
-
-	for (auto _: state)
-	{
-		benchmark::DoNotOptimize(std::visit(vis, v));
-	}
-}
-
-static void BM_VrtSwitch_Single(benchmark::State &state)
-{
-	vrt_variant_small v = 42;
-
-	for (auto _: state)
-	{
-		benchmark::DoNotOptimize(switch_visit(v));
-	}
-}
-
-static void BM_StdConstruction(benchmark::State &state)
-{
-	for (auto _: state)
-	{
-		std_variant_small v1 { 42 };
-		std_variant_small v2 { 3.14 };
-		std_variant_small v3 { std::string("test") };
-		benchmark::DoNotOptimize(v1);
-		benchmark::DoNotOptimize(v2);
-		benchmark::DoNotOptimize(v3);
-	}
-}
-
-static void BM_VrtConstruction(benchmark::State &state)
-{
-	for (auto _: state)
-	{
-		vrt_variant_small v1 { 42 };
-		vrt_variant_small v2 { 3.14 };
-		vrt_variant_small v3 { std::string("test") };
-		benchmark::DoNotOptimize(v1);
-		benchmark::DoNotOptimize(v2);
-		benchmark::DoNotOptimize(v3);
-	}
-}
-
-// Benchmark: Assignment performance
-static void BM_StdAssignment(benchmark::State &state)
-{
-	std_variant_small v;
-
-	for (auto _: state)
-	{
+	StdVariant v;
+	if constexpr (std::is_same_v<StdVariant, std_small_variant>)
 		v = 42;
-		benchmark::DoNotOptimize(v);
-		v = 3.14;
-		benchmark::DoNotOptimize(v);
-		v = std::string("test");
-		benchmark::DoNotOptimize(v);
-	}
-}
-
-static void BM_VrtAssignment(benchmark::State &state)
-{
-	vrt_variant_small v;
-
-	for (auto _: state)
-	{
+	else if constexpr (std::is_same_v<StdVariant, std_mixed_variant>)
+		v = trivial_small{42};
+	else if constexpr (std::is_same_v<StdVariant, std_large_variant>)
 		v = 42;
-		benchmark::DoNotOptimize(v);
-		v = 3.14;
-		benchmark::DoNotOptimize(v);
-		v = std::string("test");
-		benchmark::DoNotOptimize(v);
+	else if constexpr (std::is_same_v<StdVariant, std_many_variant>)
+		v = 42;
+
+	vvvv visitor;
+
+	for (auto _ : state)
+	{
+		benchmark::DoNotOptimize(std::visit(visitor, v));
 	}
 }
 
-static void BM_StdLargeObjects(benchmark::State &state)
+template<typename VrtVariant>
+static void BM_VrtVisit_Single(benchmark::State& state)
 {
-	std::vector<std_variant_mixed> variants;
-	variants.reserve(100);
+	VrtVariant v;
+	if constexpr (std::is_same_v<VrtVariant, vrt_small_variant>)
+		v = 42;
+	else if constexpr (std::is_same_v<VrtVariant, vrt_mixed_variant>)
+		v = trivial_small{42};
+	else if constexpr (std::is_same_v<VrtVariant, vrt_large_variant>)
+		v = 42;
+	else if constexpr (std::is_same_v<VrtVariant, vrt_many_variant>)
+		v = 42;
 
-	for (auto _: state)
+	vvvv visitor;
+
+	for (auto _ : state)
 	{
-		variants.clear();
-		for (int i = 0; i < 100; ++i)
+		benchmark::DoNotOptimize(vrt::visit(visitor, v));
+	}
+}
+
+template<typename VrtVariant>
+static void BM_VrtSwitch_Single(benchmark::State& state)
+{
+	VrtVariant v;
+	if constexpr (std::is_same_v<VrtVariant, vrt_small_variant>)
+		v = 42;
+	else if constexpr (std::is_same_v<VrtVariant, vrt_mixed_variant>)
+		v = trivial_small{42};
+	else if constexpr (std::is_same_v<VrtVariant, vrt_large_variant>)
+		v = 42;
+	else if constexpr (std::is_same_v<VrtVariant, vrt_many_variant>)
+		v = 42;
+
+	for (auto _ : state)
+	{
+		benchmark::DoNotOptimize(switch_visit_impl(v));
+	}
+}
+
+template<typename StdVariant, typename VrtVariant>
+static void BM_Construction_Comparison(benchmark::State& state)
+{
+	for (auto _ : state)
+	{
+		if constexpr (std::is_same_v<StdVariant, std_small_variant>)
 		{
-			variants.emplace_back(large_type { {}, i });
+			StdVariant std_v1{42};
+			VrtVariant vrt_v1{42};
+			StdVariant std_v2{3.14};
+			VrtVariant vrt_v2{3.14};
+			StdVariant std_v3{std::string("test")};
+			VrtVariant vrt_v3{std::string("test")};
+			benchmark::DoNotOptimize(std_v1);
+			benchmark::DoNotOptimize(vrt_v1);
+			benchmark::DoNotOptimize(std_v2);
+			benchmark::DoNotOptimize(vrt_v2);
+			benchmark::DoNotOptimize(std_v3);
+			benchmark::DoNotOptimize(vrt_v3);
 		}
-		benchmark::DoNotOptimize(variants);
-	}
-}
-
-static void BM_VrtLargeObjects(benchmark::State &state)
-{
-	std::vector<vrt_variant_mixed> variants;
-	variants.reserve(100);
-
-	for (auto _: state)
-	{
-		variants.clear();
-		for (int i = 0; i < 100; ++i)
+		else if constexpr (std::is_same_v<StdVariant, std_mixed_variant>)
 		{
-			variants.emplace_back(large_type { {}, i });
+			StdVariant std_v1{trivial_small{42}};
+			VrtVariant vrt_v1{trivial_small{42}};
+			StdVariant std_v2{non_trivial_small{123}};
+			VrtVariant vrt_v2{non_trivial_small{123}};
+			StdVariant std_v3{medium_object{456, "test"}};
+			VrtVariant vrt_v3{medium_object{456, "test"}};
+			benchmark::DoNotOptimize(std_v1);
+			benchmark::DoNotOptimize(vrt_v1);
+			benchmark::DoNotOptimize(std_v2);
+			benchmark::DoNotOptimize(vrt_v2);
+			benchmark::DoNotOptimize(std_v3);
+			benchmark::DoNotOptimize(vrt_v3);
 		}
-		benchmark::DoNotOptimize(variants);
-	}
-}
-
-static void BM_VrtVisit_Small(benchmark::State &state)
-{
-	auto [std_variants, vrt_variants] = generate_test_data<std_variant_small, vrt_variant_small>(1000);
-
-	auto visitor_lambda = [](auto &&arg) -> int
-	{
-		using T = std::decay_t<decltype(arg)>;
-		if constexpr (std::is_same_v<T, int>)
-			return arg * 2;
-		else if constexpr (std::is_same_v<T, double>)
-			return static_cast<int>(arg * 2.0);
-		else if constexpr (std::is_same_v<T, std::string>)
-			return static_cast<int>(arg.length());
-	};
-
-	for (auto _: state)
-	{
-		for (const auto &v: vrt_variants)
+		else if constexpr (std::is_same_v<StdVariant, std_large_variant>)
 		{
-			benchmark::DoNotOptimize(vrt::visit(visitor_lambda, v));
+			StdVariant std_v1{42};
+			VrtVariant vrt_v1{42};
+			StdVariant std_v2{3.14};
+			VrtVariant vrt_v2{3.14};
+			StdVariant std_v3{std::string("test")};
+			VrtVariant vrt_v3{std::string("test")};
+			StdVariant std_v4{medium_object{456, "test"}};
+			VrtVariant vrt_v4{medium_object{456, "test"}};
+			StdVariant std_v5{large_object{789}};
+			VrtVariant vrt_v5{large_object{789}};
+			benchmark::DoNotOptimize(std_v1);
+			benchmark::DoNotOptimize(vrt_v1);
+			benchmark::DoNotOptimize(std_v2);
+			benchmark::DoNotOptimize(vrt_v2);
+			benchmark::DoNotOptimize(std_v3);
+			benchmark::DoNotOptimize(vrt_v3);
+			benchmark::DoNotOptimize(std_v4);
+			benchmark::DoNotOptimize(vrt_v4);
+			benchmark::DoNotOptimize(std_v5);
+			benchmark::DoNotOptimize(vrt_v5);
 		}
-	}
-	state.SetItemsProcessed(state.iterations() * vrt_variants.size());
-}
-
-static void BM_VrtVisit_Mixed(benchmark::State &state)
-{
-	auto [std_variants, vrt_variants] = generate_test_data<std_variant_mixed, vrt_variant_mixed>(1000);
-
-	auto visitor_lambda = [](auto &&arg) -> int
-	{
-		return arg.value * 2;
-	};
-
-	for (auto _: state)
-	{
-		for (const auto &v: vrt_variants)
+		else if constexpr (std::is_same_v<StdVariant, std_many_variant>)
 		{
-			benchmark::DoNotOptimize(vrt::visit(visitor_lambda, v));
+			StdVariant std_v1{42};
+			VrtVariant vrt_v1{42};
+			StdVariant std_v2{3.14};
+			VrtVariant vrt_v2{3.14};
+			StdVariant std_v3{std::string("test")};
+			VrtVariant vrt_v3{std::string("test")};
+			StdVariant std_v4{std::vector<int>{1, 2, 3}};
+			VrtVariant vrt_v4{std::vector<int>{1, 2, 3}};
+			benchmark::DoNotOptimize(std_v1);
+			benchmark::DoNotOptimize(vrt_v1);
+			benchmark::DoNotOptimize(std_v2);
+			benchmark::DoNotOptimize(vrt_v2);
+			benchmark::DoNotOptimize(std_v3);
+			benchmark::DoNotOptimize(vrt_v3);
+			benchmark::DoNotOptimize(std_v4);
+			benchmark::DoNotOptimize(vrt_v4);
 		}
 	}
-	state.SetItemsProcessed(state.iterations() * vrt_variants.size());
 }
 
-static void BM_VrtVisit_Many(benchmark::State &state)
+template<typename StdVariant, typename VrtVariant>
+static void BM_Assignment_Comparison(benchmark::State& state)
 {
-	auto [std_variants, vrt_variants] = generate_test_data<std_variant_many, vrt_variant_many>(1000);
+	StdVariant std_v;
+	VrtVariant vrt_v;
 
-	auto visitor_lambda = [](auto &&arg) -> int
+	for (auto _ : state)
 	{
-		using T = std::decay_t<decltype(arg)>;
-		if constexpr (std::is_same_v<T, int>)
-			return arg * 2;
-		else if constexpr (std::is_same_v<T, double>)
-			return static_cast<int>(arg * 2.0);
-		else if constexpr (std::is_same_v<T, float>)
-			return static_cast<int>(arg * 2.0f);
-		else if constexpr (std::is_same_v<T, char>)
-			return static_cast<int>(arg) * 2;
-		else if constexpr (std::is_same_v<T, short>)
-			return static_cast<int>(arg) * 2;
-		else if constexpr (std::is_same_v<T, long>)
-			return static_cast<int>(arg) * 2;
-		else if constexpr (std::is_same_v<T, std::string>)
-			return static_cast<int>(arg.length());
-		else if constexpr (std::is_same_v<T, std::vector<int> >)
-			return static_cast<int>(arg.size());
-	};
-
-	for (auto _: state)
-	{
-		for (const auto &v: vrt_variants)
+		if constexpr (std::is_same_v<StdVariant, std_small_variant>)
 		{
-			benchmark::DoNotOptimize(vrt::visit(visitor_lambda, v));
+			std_v = 42;
+			vrt_v = 42;
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+
+			std_v = 3.14;
+			vrt_v = 3.14;
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+
+			std_v = std::string("test");
+			vrt_v = std::string("test");
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+		}
+		else if constexpr (std::is_same_v<StdVariant, std_mixed_variant>)
+		{
+			std_v = trivial_small{42};
+			vrt_v = trivial_small{42};
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+
+			std_v = non_trivial_small{123};
+			vrt_v = non_trivial_small{123};
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+
+			std_v = medium_object{456, "test"};
+			vrt_v = medium_object{456, "test"};
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+		}
+		else if constexpr (std::is_same_v<StdVariant, std_large_variant>)
+		{
+			std_v = 42;
+			vrt_v = 42;
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+
+			std_v = 3.14;
+			vrt_v = 3.14;
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+
+			std_v = std::string("test");
+			vrt_v = std::string("test");
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+
+			std_v = medium_object{456, "test"};
+			vrt_v = medium_object{456, "test"};
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+		}
+		else if constexpr (std::is_same_v<StdVariant, std_many_variant>)
+		{
+			std_v = 42;
+			vrt_v = 42;
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+
+			std_v = 3.14;
+			vrt_v = 3.14;
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
+
+			std_v = std::string("test");
+			vrt_v = std::string("test");
+			benchmark::DoNotOptimize(std_v);
+			benchmark::DoNotOptimize(vrt_v);
 		}
 	}
-	state.SetItemsProcessed(state.iterations() * vrt_variants.size());
 }
 
-static void BM_VrtVisit_Single(benchmark::State &state)
+template<typename StdVariant, typename VrtVariant>
+static void BM_CacheEfficiency(benchmark::State& state)
 {
-	vrt_variant_small v = 42;
+	constexpr std::size_t LARGE_COUNT = 10000;
+	auto [std_variants, vrt_variants] = generate_variants<StdVariant, VrtVariant>(LARGE_COUNT);
+	vvvv visitor;
 
-	auto visitor_lambda = [](auto &&arg) -> int
+	for (auto _ : state)
 	{
-		using T = std::decay_t<decltype(arg)>;
-		if constexpr (std::is_same_v<T, int>)
-			return arg * 2;
-		else if constexpr (std::is_same_v<T, double>)
-			return static_cast<int>(arg * 2.0);
-		else if constexpr (std::is_same_v<T, std::string>)
-			return static_cast<int>(arg.length());
-	};
-
-	for (auto _: state)
-	{
-		benchmark::DoNotOptimize(vrt::visit(visitor_lambda, v));
+		std::size_t std_sum = 0, vrt_sum = 0;
+		for (std::size_t i = 0; i < LARGE_COUNT; i += 17)
+		{
+			std_sum += std::visit(visitor, std_variants[i]);
+			vrt_sum += switch_visit_impl(vrt_variants[i]);
+		}
+		benchmark::DoNotOptimize(std_sum);
+		benchmark::DoNotOptimize(vrt_sum);
 	}
 }
 
-BENCHMARK(BM_StdVisit_Small)->Name("std::visit/Small");
-BENCHMARK(BM_VrtVisit_Small)->Name("vrt::visit/Small");
-BENCHMARK(BM_VrtSwitch_Small)->Name("vrt::switch/Small");
+#define REGISTER_COMPARISON_BENCHMARKS(name, std_type, vrt_type) \
+	BENCHMARK(BM_StdVisit_Pattern<std_type, vrt_type>)->Name("std::visit/" name); \
+	BENCHMARK(BM_VrtVisit_Pattern<std_type, vrt_type>)->Name("vrt::visit/" name); \
+	BENCHMARK(BM_VrtSwitch_Pattern<std_type, vrt_type>)->Name("vrt::switch/" name); \
+	BENCHMARK(BM_StdVisit_Single<std_type>)->Name("std::visit/" name "/Single"); \
+	BENCHMARK(BM_VrtVisit_Single<vrt_type>)->Name("vrt::visit/" name "/Single"); \
+	BENCHMARK(BM_VrtSwitch_Single<vrt_type>)->Name("vrt::switch/" name "/Single"); \
+	BENCHMARK(BM_Construction_Comparison<std_type, vrt_type>)->Name("Construction/" name); \
+	BENCHMARK(BM_Assignment_Comparison<std_type, vrt_type>)->Name("Assignment/" name); \
+	BENCHMARK(BM_CacheEfficiency<std_type, vrt_type>)->Name("CacheEfficiency/" name);
 
-BENCHMARK(BM_StdVisit_Mixed)->Name("std::visit/Mixed");
-BENCHMARK(BM_VrtVisit_Mixed)->Name("vrt::visit/Mixed");
-BENCHMARK(BM_VrtSwitch_Mixed)->Name("vrt::switch/Mixed");
-
-BENCHMARK(BM_StdVisit_Many)->Name("std::visit/Many");
-BENCHMARK(BM_VrtVisit_Many)->Name("vrt::visit/Many");
-BENCHMARK(BM_VrtSwitch_Many)->Name("vrt::switch/Many");
-
-BENCHMARK(BM_StdVisit_Single)->Name("std::visit/Single");
-BENCHMARK(BM_VrtVisit_Single)->Name("vrt::visit/Single");
-BENCHMARK(BM_VrtSwitch_Single)->Name("vrt::switch/Single");
-
-BENCHMARK(BM_StdConstruction)->Name("std::variant/Construction");
-BENCHMARK(BM_VrtConstruction)->Name("vrt::variant/Construction");
-
-BENCHMARK(BM_StdAssignment)->Name("std::variant/Assignment");
-BENCHMARK(BM_VrtAssignment)->Name("vrt::variant/Assignment");
-
-BENCHMARK(BM_StdLargeObjects)->Name("std::variant/LargeObjects");
-BENCHMARK(BM_VrtLargeObjects)->Name("vrt::variant/LargeObjects");
+REGISTER_COMPARISON_BENCHMARKS("SmallTypes", std_small_variant, vrt_small_variant)
+REGISTER_COMPARISON_BENCHMARKS("MixedTypes", std_mixed_variant, vrt_mixed_variant)
+REGISTER_COMPARISON_BENCHMARKS("LargeTypes", std_large_variant, vrt_large_variant)
+REGISTER_COMPARISON_BENCHMARKS("ManyTypes", std_many_variant, vrt_many_variant)
 
 BENCHMARK_MAIN();
