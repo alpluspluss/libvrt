@@ -1,6 +1,8 @@
 # this project is part of the vrt project; licensed under the MIT license. see LICENSE for more info
 
 cmake_minimum_required(VERSION 3.20)
+cmake_policy(SET CMP0167 NEW)
+
 project(libvrt
         VERSION 0.1.0
         DESCRIPTION "Make variants switchable again"
@@ -10,10 +12,12 @@ project(libvrt
 option(LIBVRT_BUILD_TESTS "Build tests" ON)
 option(LIBVRT_BUILD_BENCHMARKS "Build benchmarks" ON)
 option(LIBVRT_INSTALL "Enable installation" ON)
+option(LIBVRT_BENCHMARK_BOOST "Include Boost.Variant in benchmarks" ON)
 
 add_library(vrt INTERFACE)
 add_library(vrt::vrt ALIAS vrt)
 
+# C++20 as our standard
 target_compile_features(vrt INTERFACE cxx_std_20)
 
 target_include_directories(vrt INTERFACE
@@ -47,6 +51,24 @@ if(LIBVRT_BUILD_BENCHMARKS)
     )
 
     target_compile_options(vrt-benchmarks PRIVATE -O3 -DNDEBUG)
+
+    if(LIBVRT_BENCHMARK_BOOST)
+        find_package(Boost QUIET)
+        if(Boost_FOUND)
+            target_link_libraries(vrt-benchmarks PRIVATE Boost::boost)
+            target_compile_definitions(vrt-benchmarks PRIVATE HAS_BOOST)
+            message(STATUS "Boost.Variant support enabled for benchmarks")
+        else()
+            find_path(BOOST_INCLUDE_DIR boost/variant.hpp)
+            if(BOOST_INCLUDE_DIR)
+                target_include_directories(vrt-benchmarks PRIVATE ${BOOST_INCLUDE_DIR})
+                target_compile_definitions(vrt-benchmarks PRIVATE HAS_BOOST)
+                message(STATUS "Boost.Variant found as header-only library")
+            else()
+                message(WARNING "Boost not found, skipping Boost.Variant benchmarks")
+            endif()
+        endif()
+    endif()
 endif()
 
 if(LIBVRT_INSTALL)
@@ -101,5 +123,8 @@ message(STATUS "libvrt configuration:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build tests: ${LIBVRT_BUILD_TESTS}")
 message(STATUS "  Build benchmarks: ${LIBVRT_BUILD_BENCHMARKS}")
+if(LIBVRT_BUILD_BENCHMARKS)
+    message(STATUS "  Benchmark against Boost.Variant: ${LIBVRT_BENCHMARK_BOOST}")
+endif()
 message(STATUS "  Install: ${LIBVRT_INSTALL}")
 message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")

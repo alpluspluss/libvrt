@@ -398,7 +398,6 @@ namespace vrt
 			other.destroy();
 			other.i = variant_npos;
 			other.move_from_no_invalidate(temp);
-
 		}
 
 		/** @brief Check if the variant currently holds a value of type T */
