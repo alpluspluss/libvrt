@@ -439,6 +439,22 @@ namespace vrt
 		{
 			return holds_alternative<T>() ? ptr<T>() : nullptr;
 		}
+
+#if __cpp_explicit_this_parameter >= 202110L
+		/** @brief Member visit for single variant (C++26) */
+		template<class Self, class Visitor>
+		constexpr decltype(auto) visit(this Self&& self, Visitor&& vis)
+		{
+			return vrt::visit(std::forward<Visitor>(vis), std::forward<Self>(self));
+		}
+
+		/** @brief Member visit for single variant with explicit return type (C++26) */
+		template<class R, class Self, class Visitor>
+		constexpr R visit(this Self&& self, Visitor&& vis)
+		{
+			return vrt::visit<R>(std::forward<Visitor>(vis), std::forward<Self>(self));
+		}
+#endif
 	};
 
 	/** @brief Check if variant holds alternative of type T */
