@@ -93,6 +93,23 @@ namespace vrt
 			construct<T>(std::move(*other.ptr<T>()));
 		}
 
+		template<typename T>
+		void move_construct_no_invalidate(const variant& other)
+		{
+			construct<T>(std::move(*other.ptr<T>()));
+		}
+
+		void move_from_no_invalidate(variant& other)
+		{
+			if (other.i != variant_npos)
+			{
+				std::size_t idx = 0;
+				((++idx - 1 == other.i ? move_construct_no_invalidate<Ts>(other) : void()), ...);
+				i = other.i;
+				/* deliberately don't invalidate `other` for swap purposes */
+			}
+		}
+
 	public:
 		/** @brief Compile-time type index constants for switch statements */
 		template<typename T>
@@ -100,10 +117,14 @@ namespace vrt
 
 		/** @brief Default constructor; constructs first alternative */
 		variant() noexcept(std::is_nothrow_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>)
-			requires std::is_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>
+			requires(std::is_default_constructible_v<std::tuple_element_t<0, std::tuple<Ts...>>>)
+			: i(variant_npos) /* start invalid for exception safety */
 		{
+			/* if default construction of first type throws, `*this` will remain in valid
+			 * empty state rather than having a valid index with uninitialized storage */
 			using first_t = std::tuple_element_t<0, std::tuple<Ts...>>;
 			construct<first_t>();
+			/* only set valid index after successful construction */
 			i = 0;
 		}
 
@@ -113,47 +134,82 @@ namespace vrt
 			         !std::is_same_v<std::decay_t<T>, variant> &&
 			         std::is_constructible_v<std::decay_t<T>, T>)
 		variant(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
+			: i(variant_npos) /* start invalid for exception safety */
 		{
+			/* if construction of `T` throws, `*this` will remain in valid empty state
+			 * rather than having a valid index with uninitialized storage */
 			using type = std::decay_t<T>;
 			construct<type>(std::forward<T>(t));
+			/* only set valid index after successful construction */
 			i = type_index<type>();
+		}
+
+		/** @brief In-place constructor by type */
+		template<typename T, typename... Args>
+			requires((std::is_same_v<T, Ts> || ...) && std::is_constructible_v<T, Args...>)
+		variant(std::in_place_type_t<T>, Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args...>)
+			: i(variant_npos) /* start invalid for exception safety */
+		{
+			/* if in-place construction throws, `*this` will remain in valid empty state
+			 * rather than having a valid index with uninitialized storage */
+			construct<T>(std::forward<Args>(args)...);
+			/* only set valid index after successful construction */
+			i = type_index<T>();
+		}
+
+		/** @brief In-place constructor by index */
+		template<std::size_t I, typename... Args>
+			requires(I < sizeof...(Ts))
+		variant(std::in_place_index_t<I>, Args&&... args)
+			noexcept(std::is_nothrow_constructible_v<std::tuple_element_t<I, std::tuple<Ts...>>, Args...>)
+			: i(variant_npos) /* start invalid for exception safety */
+		{
+			/* if in-place construction throws, `*this` will remain in valid empty state
+			 * rather than having a valid index with uninitialized storage */
+			using type = std::tuple_element_t<I, std::tuple<Ts...>>;
+			static_assert(std::is_constructible_v<type, Args...>, "Type must be constructible from provided arguments");
+			construct<type>(std::forward<Args>(args)...);
+			/* only set valid index after successful construction */
+			i = I;
 		}
 
 		/** @brief Copy constructor */
 		variant(const variant& other) noexcept(nothrow_copy_constructible)
-			: i(other.i)
+			: i(variant_npos) /* start invalid for exception safety */
 		{
-			if (i != variant_npos)
+			/* if the copy construction throws, `*this` would remain in a valid empty
+			 * state rather than having a valid index with uninitialized storage */
+			if (other.i != variant_npos)
 			{
 				std::size_t idx = 0;
-				((++idx - 1 == i ? copy_construct<Ts>(other) : void()), ...);
+				((++idx - 1 == other.i ? copy_construct<Ts>(other) : void()), ...);
+				/* a valid index shall be set only after successful construction */
+				i = other.i;
 			}
+			/* note: `other` remains unchanged regardless of success or failure */
 		}
 
 		/** @brief Move constructor */
 		variant(variant&& other) noexcept(nothrow_move_constructible)
-			: i(other.i)
+			: i(variant_npos) /* start invalid for exception safety */
 		{
-			if (i != variant_npos)
+			if (other.i != variant_npos)
 			{
 				std::size_t idx = 0;
-				((++idx - 1 == i ? move_construct<Ts>(std::move(other)) : void()), ...);
+				((++idx - 1 == other.i ? move_construct<Ts>(std::move(other)) : void()), ...);
+				i = other.i;
+				other.destroy();
+				other.i = variant_npos;
 			}
-			other.i = variant_npos;
 		}
 
 		/** @brief Copy assignment operator */
-		variant& operator=(const variant& other) noexcept(nothrow_copy_constructible)
+		variant& operator=(const variant& other)
 		{
 			if (this != &other)
 			{
-				destroy();
-				i = other.i;
-				if (i != variant_npos)
-				{
-					std::size_t idx = 0;
-					((++idx - 1 == i ? copy_construct<Ts>(other) : void()), ...);
-				}
+				variant temp(other);
+				swap(temp);
 			}
 			return *this;
 		}
@@ -163,14 +219,8 @@ namespace vrt
 		{
 			if (this != &other)
 			{
-				destroy();
-				i = other.i;
-				if (i != variant_npos)
-				{
-					std::size_t idx = 0;
-					((++idx - 1 == i ? move_construct<Ts>(std::move(other)) : void()), ...);
-				}
-				other.i = variant_npos;
+				variant temp(std::move(other));
+				swap(temp);
 			}
 			return *this;
 		}
@@ -182,6 +232,8 @@ namespace vrt
 			         std::is_constructible_v<std::decay_t<T>, T>)
 		variant& operator=(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
 		{
+			/* this is for single values, not variant-to-variant assignment. therefore
+			 * there would be no risk of partial state since it would be destroyed first the contruct */
 			using type = std::decay_t<T>;
 			destroy();
 			construct<type>(std::forward<T>(t));
@@ -230,11 +282,63 @@ namespace vrt
 		/** @brief Swap contents with another variant */
 		void swap(variant& other) noexcept(nothrow_move_constructible)
 		{
-			if (this == &other) return;
+			if (this == &other)
+				return;
 
-			variant temp = std::move(*this);
-			*this = std::move(other);
-			other = std::move(temp);
+			if (i == variant_npos && other.i == variant_npos)
+				return; /* both empty, nothing to do */
+
+			/* `*this` is empty, move `other` into `*this` and clear `other` */
+			if (i == variant_npos)
+			{
+				move_from_no_invalidate(other);
+				other.destroy();
+				other.i = variant_npos;
+				return;
+			}
+
+			if (other.i == variant_npos)
+			{
+				/* `other` is empty, move `*this` into `other` and clear `*this` */
+				other.move_from_no_invalidate(*this);
+				destroy();
+				i = variant_npos;
+				return;
+			}
+
+			/* mandated by https://eel.is/c++draft/variant.swap#3.2 */
+			if (i == other.i)
+			{
+				std::size_t idx = 0;
+				((++idx - 1 == i ? std::swap(*ptr<Ts>(), *other.ptr<Ts>()) : void()), ...);
+				return;
+			}
+
+			/* note: raw storage swap if safe when all alternatives are trivially relocatable.
+			 * the type trait checks exclude most dangerous cases so creating trivially
+			 * movable types with internal pointers should ensure proper relocatable semantics */
+			if constexpr ((std::is_trivially_move_constructible_v<Ts> && ...) &&
+				(std::is_trivially_move_assignable_v<Ts> && ...) &&
+				(std::is_trivially_destructible_v<Ts> && ...) &&
+				(std::is_nothrow_move_constructible_v<Ts> && ...))
+			{
+				std::swap_ranges(storage, storage + MAX_SIZE, other.storage);
+				std::swap(i, other.i);
+				return;
+			}
+
+			/* standard three-way move; note: this is the slowest by far */
+			variant temp;
+			temp.move_from_no_invalidate(*this);
+
+			destroy();
+			i = variant_npos;
+			move_from_no_invalidate(other);
+
+			other.destroy();
+			other.i = variant_npos;
+			other.move_from_no_invalidate(temp);
+
 		}
 
 		/** @brief Check if the variant currently holds a value of type T */

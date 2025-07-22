@@ -82,11 +82,11 @@ See the [benchmark results](assets/bench-results.json) for raw performance analy
 #### Using CMake
 
 ```shell
-git clone https://github.com/alpluspluss/libvrt.git
-cd libvrt
-mkdir build && cd build
-cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local -DLIBVRT_BUILD_TESTS=OFF
-make install
+$ git clone https://github.com/alpluspluss/libvrt.git
+$ cd libvrt
+$ mkdir build && cd build
+$ cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local -DLIBVRT_BUILD_TESTS=OFF -DLIBVRT_BUILD_BENCHMARKS=OFF
+$ make install
 ```
 
 And then in your project's `CMakeLists.txt`:
@@ -113,7 +113,8 @@ Simply copy the `include/vrt` directory to your project's include path then do
 int main()
 {
     /* create a variant that can hold int, double, and std::string */
-    vrt::variant<int, double, std::string> v;
+    using Value = vrt::variant<int, double, std::string>;
+    Value v;
     
     v = 42; /* assign an int value */
     std::cout << "holds int?: " << vrt::holds_alternative<int>(v) << std::endl;
@@ -122,17 +123,17 @@ int main()
     /* the switch case */
     switch (v.index())
     {
-    case decltype(v)::of<int>:
-        std::cout << "int: " << vrt::get<int>(v) << '\n';
-        break;
-        
-    case decltype(v)::of<double>:
-        std::cout << "double: " << vrt::get<double>(v) << '\n';
-        break;
-        
-    case decltype(v)::of<std::string>:
-        std::cout << "string: " << vrt::get<std::string>(v) << '\n';
-        break;
+        case Value::of<int>:
+            std::cout << "int: " << vrt::get<int>(v) << '\n';
+            break;
+            
+        case Value::of<double>:
+            std::cout << "double: " << vrt::get<double>(v) << '\n';
+            break;
+            
+        case Value::of<std::string>:
+            std::cout << "string: " << vrt::get<std::string>(v) << '\n';
+            break;
     }
     
     return 0;
