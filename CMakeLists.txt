@@ -2,14 +2,14 @@
 
 cmake_minimum_required(VERSION 3.20)
 project(libvrt
-        VERSION 1.0.0
-        DESCRIPTION "Type-safe variant with switch case support and small storage optimization"
+        VERSION 0
+        DESCRIPTION "Make variants switchable again"
         LANGUAGES CXX
 )
 
 option(LIBVRT_BUILD_TESTS "Build tests" ON)
-option(LIBVRT_BUILD_BENCHMARKS "Build benchmarks" OFF)
-option(LIBVRT_INSTALL "Enable installation" OFF)
+option(LIBVRT_BUILD_BENCHMARKS "Build benchmarks" ON)
+option(LIBVRT_INSTALL "Enable installation" ON)
 
 add_library(vrt INTERFACE)
 add_library(vrt::vrt ALIAS vrt)
