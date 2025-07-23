@@ -4,20 +4,19 @@ cmake_minimum_required(VERSION 3.20)
 cmake_policy(SET CMP0167 NEW)
 
 project(libvrt
-        VERSION 0.1.0
-        DESCRIPTION "Make variants switchable again"
+        VERSION 0.1.1
+        DESCRIPTION "Make variants switchable safely again"
         LANGUAGES CXX
 )
 
 option(LIBVRT_BUILD_TESTS "Build tests" ON)
 option(LIBVRT_BUILD_BENCHMARKS "Build benchmarks" ON)
 option(LIBVRT_INSTALL "Enable installation" ON)
-option(LIBVRT_BENCHMARK_BOOST "Include Boost.Variant in benchmarks" ON)
+option(LIBVRT_BENCHMARK_BOOST "Include Boost variants in benchmarks" ON)
 
 add_library(vrt INTERFACE)
 add_library(vrt::vrt ALIAS vrt)
 
-# C++20 as our standard
 target_compile_features(vrt INTERFACE cxx_std_20)
 
 target_include_directories(vrt INTERFACE
@@ -44,28 +43,32 @@ if(LIBVRT_BUILD_BENCHMARKS)
     find_package(benchmark REQUIRED)
 
     add_executable(vrt-benchmarks benches/variant.cpp)
-    target_link_libraries(vrt-benchmarks
-            PRIVATE
-            vrt::vrt
-            benchmark::benchmark
-    )
+    target_link_libraries(vrt-benchmarks PRIVATE vrt::vrt benchmark::benchmark)
 
-    target_compile_options(vrt-benchmarks PRIVATE -O3 -DNDEBUG)
+    target_compile_options(vrt-benchmarks PRIVATE -O3 -DNDEBUG -march=native)
+
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        target_compile_options(vrt-benchmarks PRIVATE -fno-omit-frame-pointer)
+    endif()
 
     if(LIBVRT_BENCHMARK_BOOST)
         find_package(Boost QUIET)
+        set(BOOST_VARIANT_FOUND FALSE)
+
         if(Boost_FOUND)
             target_link_libraries(vrt-benchmarks PRIVATE Boost::boost)
-            target_compile_definitions(vrt-benchmarks PRIVATE HAS_BOOST)
-            message(STATUS "Boost.Variant support enabled for benchmarks")
+            set(BOOST_VARIANT_FOUND TRUE)
+            message(STATUS "Boost found - assuming both Boost.Variant and Boost.Variant2 available")
+            target_compile_definitions(vrt-benchmarks PRIVATE HAS_BOOST_VARIANT HAS_BOOST_VARIANT2)
         else()
             find_path(BOOST_INCLUDE_DIR boost/variant.hpp)
             if(BOOST_INCLUDE_DIR)
                 target_include_directories(vrt-benchmarks PRIVATE ${BOOST_INCLUDE_DIR})
-                target_compile_definitions(vrt-benchmarks PRIVATE HAS_BOOST)
-                message(STATUS "Boost.Variant found as header-only library")
+                set(BOOST_VARIANT_FOUND TRUE)
+                message(STATUS "Boost found (header-only) - assuming both variants available")
+                target_compile_definitions(vrt-benchmarks PRIVATE HAS_BOOST_VARIANT HAS_BOOST_VARIANT2)
             else()
-                message(WARNING "Boost not found, skipping Boost.Variant benchmarks")
+                message(WARNING "Boost not found, realistic benchmarks will be limited")
             endif()
         endif()
     endif()
@@ -123,8 +126,8 @@ message(STATUS "libvrt configuration:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build tests: ${LIBVRT_BUILD_TESTS}")
 message(STATUS "  Build benchmarks: ${LIBVRT_BUILD_BENCHMARKS}")
-if(LIBVRT_BUILD_BENCHMARKS)
-    message(STATUS "  Benchmark against Boost.Variant: ${LIBVRT_BENCHMARK_BOOST}")
+if(LIBVRT_BUILD_BENCHMARKS AND LIBVRT_BENCHMARK_BOOST)
+    message(STATUS "  Boost variants available: ${BOOST_VARIANT_FOUND}")
 endif()
 message(STATUS "  Install: ${LIBVRT_INSTALL}")
 message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")

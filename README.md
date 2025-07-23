@@ -1,7 +1,7 @@
 <div align="center">
     <img src="assets/vrt-logo.png" alt="Logo" width="35%">
     <h1>vrt</h1>
-    <p><i>Make variants switchable again</i></p>
+    <p><i>Make variants switchable safely again</i></p>
     <p>
         <img src="https://img.shields.io/github/v/release/alpluspluss/libvrt" alt="Release">
         <img src="https://img.shields.io/badge/C%2B%2B-20-00599C.svg" alt="C++ Version">
@@ -14,7 +14,8 @@
 
 `std::variant` is a powerful type introduced in C++17, however, it can be cumbersome to use as
 it requires verbose `std::visit` calls and can lead to boilerplate code. `vrt` solves this with
-natural switch case support while maintaining 100% API compatibility with `std::variant`.
+natural switch case support while maintaining 100% API compatibility with `std::variant` as well as additional
+components such as `vrt::visit` for `std::visit` compatibility and `vrt::match` for pattern matching.
 
 ### Comparison
 

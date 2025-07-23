@@ -1,670 +1,727 @@
 #include <array>
+#include <memory>
 #include <random>
+#include <sstream>
 #include <string>
 #include <variant>
 #include <vector>
 #include <vrt>
 #include <benchmark/benchmark.h>
 
-#ifdef HAS_BOOST
+#ifdef HAS_BOOST_VARIANT
 #include <boost/variant.hpp>
 #include <boost/variant/apply_visitor.hpp>
 #endif
 
-struct trivial_small
+#ifdef HAS_BOOST_VARIANT2
+#include <boost/variant2/variant.hpp>
+#endif
+
+struct simple_pod
 {
-	int value;
-
-	bool operator==(const trivial_small& other) const = default;
-};
-
-struct non_trivial_small
-{
-	std::unique_ptr<int> ptr;
-
-	non_trivial_small() : ptr(std::make_unique<int>(0)) {}
-	non_trivial_small(int v) : ptr(std::make_unique<int>(v)) {}
-	non_trivial_small(const non_trivial_small& other) : ptr(std::make_unique<int>(*other.ptr)) {}
-	non_trivial_small& operator=(const non_trivial_small& other)
-	{
-		if (this != &other)
-			ptr = std::make_unique<int>(*other.ptr);
-		return *this;
-	}
-	non_trivial_small(non_trivial_small&&) = default;
-	non_trivial_small& operator=(non_trivial_small&&) = default;
-
-	bool operator==(const non_trivial_small& other) const
-	{
-		return ptr && other.ptr && *ptr == *other.ptr;
-	}
+	int x;
+	double y;
 };
 
 struct medium_object
 {
-	std::array<int, 32> data;
-	std::string name;
+	std::array<int, 16> data;
+	std::string label;
+	medium_object() : data {}, label("default") {}
 
-	medium_object() : data{}, name("default") {}
-	medium_object(int val, const std::string& n) : name(n)
+	medium_object(int v, std::string l) : label(std::move(l))
 	{
-		data.fill(val);
+		data.fill(v);
 	}
-
-	bool operator==(const medium_object& other) const = default;
 };
 
-struct large_object
+struct complex_object
 {
-	std::array<int, 256> data;
-	std::vector<std::string> strings;
+	std::array<double, 32> matrix;
+	std::vector<std::string> tags;
+	std::unique_ptr<int> ptr;
+	complex_object() : matrix {}, tags(4, "tag"), ptr(std::make_unique<int>(42)) {}
 
-	large_object() : data{}, strings(8, "test") {}
-	large_object(int val) : strings(8, "test")
+	complex_object(const complex_object &other) : matrix(other.matrix), tags(other.tags),
+	                                              ptr(std::make_unique<int>(*other.ptr)) {}
+
+	complex_object &operator=(const complex_object &other)
 	{
-		data.fill(val);
+		if (this != &other)
+		{
+			matrix = other.matrix;
+			tags = other.tags;
+			ptr = std::make_unique<int>(*other.ptr);
+		}
+		return *this;
 	}
 
-	bool operator==(const large_object& other) const = default;
+	complex_object(complex_object &&) = default;
+
+	complex_object &operator=(complex_object &&) = default;
 };
 
-using std_simple_t = std::variant<int, double, std::string>;
-using vrt_simple_t = vrt::variant<int, double, std::string>;
+using test_variant_std = std::variant<int, std::string, simple_pod, medium_object, complex_object>;
+using test_variant_vrt = vrt::variant<int, std::string, simple_pod, medium_object, complex_object>;
 
-#ifdef HAS_BOOST
-using boost_simple_t = boost::variant<int, double, std::string>;
+#ifdef HAS_BOOST_VARIANT
+using test_variant_boost = boost::variant<int, std::string, simple_pod, medium_object, complex_object>;
 #endif
 
-using std_complex_t = std::variant<trivial_small, non_trivial_small, medium_object>;
-using vrt_complex_t = vrt::variant<trivial_small, non_trivial_small, medium_object>;
-
-#ifdef HAS_BOOST
-using boost_complex_t = boost::variant<trivial_small, non_trivial_small, medium_object>;
+#ifdef HAS_BOOST_VARIANT2
+using test_variant_boost2 = boost::variant2::variant<int, std::string, simple_pod, medium_object, complex_object>;
 #endif
 
-using std_large_t = std::variant<
-	int, double, float, char, short, long, long long, bool,
-	std::string, std::vector<int>, std::array<int, 4>, medium_object, large_object
->;
-using vrt_large_t = vrt::variant<
-	int, double, float, char, short, long, long long, bool,
-	std::string, std::vector<int>, std::array<int, 4>, medium_object, large_object
->;
-
-#ifdef HAS_BOOST
-using boost_large_t = boost::variant<
-	int, double, float, char, short, long, long long, bool,
-	std::string, std::vector<int>, std::array<int, 4>, medium_object, large_object
->;
-#endif
-
-struct cvisitor
+struct simple_visitor
 {
+	int operator()(int i) const
+	{
+		return i * 2;
+	}
+
+	int operator()(const std::string &s) const
+	{
+		return static_cast<int>(s.length());
+	}
+
+	int operator()(const simple_pod &p) const
+	{
+		return p.x;
+	}
+
+	int operator()(const medium_object &m) const
+	{
+		return m.data[0];
+	}
+
+	int operator()(const complex_object &c) const
+	{
+		return *c.ptr;
+	}
+};
+
+struct complex_visitor
+{
+	std::string operator()(int i) const
+	{
+		std::string result;
+		for (int j = 0; j < 10; ++j)
+		{
+			result += std::to_string(i + j);
+			if (j < 9)
+				result += ",";
+		}
+		std::vector<int> temp(i % 100);
+		std::iota(temp.begin(), temp.end(), 0);
+		std::sort(temp.begin(), temp.end(), std::greater<int>());
+		for (size_t k = 0; k < std::min(size_t(5), temp.size()); ++k)
+		{
+			result += ":" + std::to_string(temp[k]);
+		}
+		return result;
+	}
+
+	std::string operator()(const std::string &s) const
+	{
+		std::string result = s;
+		std::reverse(result.begin(), result.end());
+		std::transform(result.begin(), result.end(), result.begin(), ::toupper);
+		std::vector<char> chars(result.begin(), result.end());
+		std::sort(chars.begin(), chars.end());
+		std::string sorted(chars.begin(), chars.end());
+		return s + "_processed_" + sorted;
+	}
+
+	std::string operator()(const simple_pod &p) const
+	{
+		std::ostringstream oss;
+		oss << "pod{x=" << p.x << ",y=" << p.y << "}";
+		std::string base = oss.str();
+		for (int i = 0; i < 5; ++i)
+		{
+			base += "_layer" + std::to_string(i);
+		}
+		return base;
+	}
+
+	std::string operator()(const medium_object &m) const
+	{
+		std::string result = m.label + "_analysis:";
+		int sum = 0;
+		for (const auto &val: m.data)
+		{
+			sum += val;
+		}
+		result += "sum=" + std::to_string(sum);
+		std::vector<int> data_copy(m.data.begin(), m.data.end());
+		std::sort(data_copy.begin(), data_copy.end());
+		result += ",median=" + std::to_string(data_copy[data_copy.size() / 2]);
+		return result;
+	}
+
+	std::string operator()(const complex_object &c) const
+	{
+		std::string result = "complex_analysis:";
+		double matrix_sum = 0;
+		for (const auto &val: c.matrix)
+		{
+			matrix_sum += val;
+		}
+		result += "matrix_avg=" + std::to_string(matrix_sum / c.matrix.size());
+		result += ",tags=" + std::to_string(c.tags.size());
+		result += ",ptr_val=" + std::to_string(*c.ptr);
+		std::vector<std::string> tags_copy = c.tags;
+		std::sort(tags_copy.begin(), tags_copy.end());
+		for (const auto &tag: tags_copy)
+		{
+			result += "," + tag;
+		}
+		return result;
+	}
+};
+
+#ifdef HAS_BOOST_VARIANT
+struct boost_simple_visitor : boost::static_visitor<int>
+{
+public:
+	boost_simple_visitor() = default;
+
 	template<typename T>
-		requires std::is_arithmetic_v<T>
-	int operator()(T value) const
+	int operator()(const T &value) const
 	{
-		return static_cast<int>(value) * 2;
-	}
-
-	int operator()(const std::string& str) const
-	{
-		return static_cast<int>(str.length());
-	}
-
-	int operator()(const std::vector<int>& vec) const
-	{
-		return static_cast<int>(vec.size());
-	}
-
-	template<std::size_t N>
-	int operator()(const std::array<int, N>& arr) const
-	{
-		return static_cast<int>(N);
-	}
-
-	int operator()(const trivial_small& obj) const
-	{
-		return obj.value * 2;
-	}
-
-	int operator()(const non_trivial_small& obj) const
-	{
-		return *obj.ptr * 2;
-	}
-
-	int operator()(const medium_object& obj) const
-	{
-		return obj.data[0] * 2;
-	}
-
-	int operator()(const large_object& obj) const
-	{
-		return obj.data[0] * 2;
+		return simple_visitor {}(value);
 	}
 };
 
-#ifdef HAS_BOOST
-struct boost_visitor : public boost::static_visitor<int>
+struct boost_complex_visitor : boost::static_visitor<std::string>
 {
+public:
+	boost_complex_visitor() = default;
+
 	template<typename T>
-		requires std::is_arithmetic_v<T>
-	int operator()(T value) const
+	std::string operator()(const T &value) const
 	{
-		return static_cast<int>(value) * 2;
-	}
-
-	int operator()(const std::string& str) const
-	{
-		return static_cast<int>(str.length());
-	}
-
-	int operator()(const std::vector<int>& vec) const
-	{
-		return static_cast<int>(vec.size());
-	}
-
-	template<std::size_t N>
-	int operator()(const std::array<int, N>& arr) const
-	{
-		return static_cast<int>(N);
-	}
-
-	int operator()(const trivial_small& obj) const
-	{
-		return obj.value * 2;
-	}
-
-	int operator()(const non_trivial_small& obj) const
-	{
-		return *obj.ptr * 2;
-	}
-
-	int operator()(const medium_object& obj) const
-	{
-		return obj.data[0] * 2;
-	}
-
-	int operator()(const large_object& obj) const
-	{
-		return obj.data[0] * 2;
+		return complex_visitor {}(value);
 	}
 };
 #endif
 
 template<typename Variant>
-int switch_visit_impl(const Variant& v)
+static void BM_DefaultConstruction(benchmark::State &state)
 {
-	if constexpr (std::is_same_v<Variant, vrt_simple_t>)
+	for (auto _: state)
 	{
-		switch (v.index())
-		{
-			case Variant::template of<int>:
-				return v.template get<int>() * 2;
-			case Variant::template of<double>:
-				return static_cast<int>(v.template get<double>() * 2.0);
-			case Variant::template of<std::string>:
-				return static_cast<int>(v.template get<std::string>().length());
-			default:
-				return 0;
-		}
+		Variant v;
+		benchmark::DoNotOptimize(v);
 	}
-	else if constexpr (std::is_same_v<Variant, vrt_complex_t>)
-	{
-		switch (v.index())
-		{
-			case Variant::template of<trivial_small>:
-				return v.template get<trivial_small>().value * 2;
-			case Variant::template of<non_trivial_small>:
-				return *v.template get<non_trivial_small>().ptr * 2;
-			case Variant::template of<medium_object>:
-				return v.template get<medium_object>().data[0] * 2;
-			default:
-				return 0;
-		}
-	}
-	else if constexpr (std::is_same_v<Variant, vrt_large_t>)
-	{
-		switch (v.index())
-		{
-			case Variant::template of<int>:
-				return v.template get<int>() * 2;
-			case Variant::template of<double>:
-				return static_cast<int>(v.template get<double>() * 2.0);
-			case Variant::template of<float>:
-				return static_cast<int>(v.template get<float>() * 2.0f);
-			case Variant::template of<char>:
-				return static_cast<int>(v.template get<char>()) * 2;
-			case Variant::template of<short>:
-				return static_cast<int>(v.template get<short>()) * 2;
-			case Variant::template of<long>:
-				return static_cast<int>(v.template get<long>()) * 2;
-			case Variant::template of<long long>:
-				return static_cast<int>(v.template get<long long>()) * 2;
-			case Variant::template of<bool>:
-				return v.template get<bool>() ? 1 : 0;
-			case Variant::template of<std::string>:
-				return static_cast<int>(v.template get<std::string>().length());
-			case Variant::template of<std::vector<int>>:
-				return static_cast<int>(v.template get<std::vector<int>>().size());
-			case Variant::template of<std::array<int, 4>>:
-				return 4;
-			case Variant::template of<medium_object>:
-				return v.template get<medium_object>().data[0] * 2;
-			case Variant::template of<large_object>:
-				return v.template get<large_object>().data[0] * 2;
-			default:
-				return 0;
-		}
-	}
-
-	return 0;
 }
 
 template<typename Variant>
-std::vector<Variant> generate_test_variants(std::size_t count, unsigned seed = 42)
+static void BM_ValueConstruction_Int(benchmark::State &state)
 {
-	std::vector<Variant> variants;
-	variants.reserve(count);
-	std::mt19937 gen(seed);
-
-	if constexpr (std::is_same_v<Variant, std_simple_t> ||
-	              std::is_same_v<Variant, vrt_simple_t>
-#ifdef HAS_BOOST
-	              || std::is_same_v<Variant, boost_simple_t>
-#endif
-	)
+	for (auto _: state)
 	{
-		std::uniform_int_distribution<> dis(0, 2);
-		for (std::size_t i = 0; i < count; ++i)
+		Variant v { 42 };
+		benchmark::DoNotOptimize(v);
+	}
+}
+
+template<typename Variant>
+static void BM_ValueConstruction_String(benchmark::State &state)
+{
+	for (auto _: state)
+	{
+		Variant v { std::string("benchmark_test_string") };
+		benchmark::DoNotOptimize(v);
+	}
+}
+
+template<typename Variant>
+static void BM_ValueConstruction_Complex(benchmark::State &state)
+{
+	for (auto _: state)
+	{
+		Variant v { complex_object {} };
+		benchmark::DoNotOptimize(v);
+	}
+}
+
+template<typename Variant>
+static void BM_CopyConstruction(benchmark::State &state)
+{
+	Variant source { medium_object { 123, "test_object" } };
+	for (auto _: state)
+	{
+		Variant v { source };
+		benchmark::DoNotOptimize(v);
+	}
+}
+
+template<typename Variant>
+static void BM_MoveConstruction(benchmark::State &state)
+{
+	for (auto _: state)
+	{
+		Variant source { complex_object {} };
+		Variant v { std::move(source) };
+		benchmark::DoNotOptimize(v);
+	}
+}
+
+template<typename Variant>
+static void BM_CopyAssignment_SameType(benchmark::State &state)
+{
+	Variant v1 { 42 };
+	Variant v2 { 84 };
+	for (auto _: state)
+	{
+		v1 = v2;
+		benchmark::DoNotOptimize(v1);
+	}
+}
+
+template<typename Variant>
+static void BM_CopyAssignment_DifferentType(benchmark::State &state)
+{
+	Variant v1 { 42 };
+	Variant v2 { std::string("different_type") };
+	for (auto _: state)
+	{
+		v1 = v2;
+		benchmark::DoNotOptimize(v1);
+		std::swap(v1, v2);
+	}
+}
+
+template<typename Variant>
+static void BM_MoveAssignment_SameType(benchmark::State &state)
+{
+	for (auto _: state)
+	{
+		Variant v1 { std::string("original") };
+		Variant v2 { std::string("moved") };
+		v1 = std::move(v2);
+		benchmark::DoNotOptimize(v1);
+	}
+}
+
+template<typename Variant>
+static void BM_MoveAssignment_DifferentType(benchmark::State &state)
+{
+	for (auto _: state)
+	{
+		Variant v1 { 42 };
+		Variant v2 { complex_object {} };
+		v1 = std::move(v2);
+		benchmark::DoNotOptimize(v1);
+	}
+}
+
+template<typename Variant>
+static void BM_Emplace_Int(benchmark::State &state)
+{
+	Variant v;
+	for (auto _: state)
+	{
+		if constexpr (std::is_same_v<Variant, test_variant_vrt>)
 		{
-			switch (dis(gen))
+			v.template emplace<int>(state.iterations() % 1000);
+		}
+#ifdef HAS_BOOST_VARIANT
+		else if constexpr (std::is_same_v<Variant, test_variant_boost>)
+		{
+			v = static_cast<int>(state.iterations() % 1000);
+		}
+#endif
+#ifdef HAS_BOOST_VARIANT2
+		else if constexpr (std::is_same_v<Variant, test_variant_boost2>)
+		{
+			v.template emplace<int>(state.iterations() % 1000);
+		}
+#endif
+		else
+		{
+			v.template emplace<int>(state.iterations() % 1000);
+		}
+		benchmark::DoNotOptimize(v);
+	}
+}
+
+template<typename Variant>
+static void BM_Emplace_String(benchmark::State &state)
+{
+	Variant v;
+	for (auto _: state)
+	{
+		if constexpr (std::is_same_v<Variant, test_variant_vrt>)
+		{
+			v.template emplace<std::string>("test_string");
+		}
+#ifdef HAS_BOOST_VARIANT
+		else if constexpr (std::is_same_v<Variant, test_variant_boost>)
+		{
+			v = std::string("test_string");
+		}
+#endif
+#ifdef HAS_BOOST_VARIANT2
+		else if constexpr (std::is_same_v<Variant, test_variant_boost2>)
+		{
+			v.template emplace<std::string>("test_string");
+		}
+#endif
+		else
+		{
+			v.template emplace<std::string>("test_string");
+		}
+		benchmark::DoNotOptimize(v);
+	}
+}
+
+template<typename Variant>
+static void BM_Emplace_Complex(benchmark::State &state)
+{
+	Variant v;
+	for (auto _: state)
+	{
+		if constexpr (std::is_same_v<Variant, test_variant_vrt>)
+		{
+			v.template emplace<complex_object>();
+		}
+#ifdef HAS_BOOST_VARIANT
+		else if constexpr (std::is_same_v<Variant, test_variant_boost>)
+		{
+			v = complex_object {};
+		}
+#endif
+#ifdef HAS_BOOST_VARIANT2
+		else if constexpr (std::is_same_v<Variant, test_variant_boost2>)
+		{
+			v.template emplace<complex_object>();
+		}
+#endif
+		else
+		{
+			v.template emplace<complex_object>();
+		}
+		benchmark::DoNotOptimize(v);
+	}
+}
+
+template<typename Variant>
+static void BM_SimpleVisitor(benchmark::State &state)
+{
+	Variant v { medium_object { 42, "test" } };
+	simple_visitor visitor;
+	for (auto _: state)
+	{
+		int result;
+		if constexpr (std::is_same_v<Variant, test_variant_vrt>)
+		{
+			result = vrt::visit(visitor, v);
+		}
+#ifdef HAS_BOOST_VARIANT
+		else if constexpr (std::is_same_v<Variant, test_variant_boost>)
+		{
+			result = boost::apply_visitor(boost_simple_visitor {}, v);
+		}
+#endif
+#ifdef HAS_BOOST_VARIANT2
+		else if constexpr (std::is_same_v<Variant, test_variant_boost2>)
+		{
+			result = boost::variant2::visit(visitor, v);
+		}
+#endif
+		else
+		{
+			result = std::visit(visitor, v);
+		}
+		benchmark::DoNotOptimize(result);
+	}
+}
+
+template<typename Variant>
+static void BM_ComplexVisitor(benchmark::State &state)
+{
+	Variant v { complex_object {} };
+	complex_visitor visitor;
+	for (auto _: state)
+	{
+		std::string result;
+		if constexpr (std::is_same_v<Variant, test_variant_vrt>)
+		{
+			result = vrt::visit(visitor, v);
+		}
+#ifdef HAS_BOOST_VARIANT
+		else if constexpr (std::is_same_v<Variant, test_variant_boost>)
+		{
+			result = boost::apply_visitor(boost_complex_visitor {}, v);
+		}
+#endif
+#ifdef HAS_BOOST_VARIANT2
+		else if constexpr (std::is_same_v<Variant, test_variant_boost2>)
+		{
+			result = boost::variant2::visit(visitor, v);
+		}
+#endif
+		else
+		{
+			result = std::visit(visitor, v);
+		}
+		benchmark::DoNotOptimize(result);
+	}
+}
+
+template<typename Variant>
+static void BM_VrtSwitch(benchmark::State &state)
+{
+	if constexpr (std::is_same_v<Variant, test_variant_vrt>)
+	{
+		Variant v { medium_object { 42, "test" } };
+		for (auto _: state)
+		{
+			int result;
+			switch (v.index())
 			{
-				case 0:
-					variants.emplace_back(static_cast<int>(i));
+				case Variant::template of<int>:
+					result = vrt::get<int>(v) * 2;
 					break;
-				case 1:
-					variants.emplace_back(static_cast<double>(i) * 1.5);
+				case Variant::template of<std::string>:
+					result = static_cast<int>(vrt::get<std::string>(v).length());
 					break;
-				case 2:
-					variants.emplace_back(std::string("test_") + std::to_string(i));
+				case Variant::template of<simple_pod>:
+					result = vrt::get<simple_pod>(v).x;
 					break;
+				case Variant::template of<medium_object>:
+					result = vrt::get<medium_object>(v).data[0];
+					break;
+				case Variant::template of<complex_object>:
+					result = *vrt::get<complex_object>(v).ptr;
+					break;
+				default:
+					result = 0;
 			}
+			benchmark::DoNotOptimize(result);
 		}
 	}
-	else if constexpr (std::is_same_v<Variant, std_complex_t> ||
-	                   std::is_same_v<Variant, vrt_complex_t>
-#ifdef HAS_BOOST
-	                   || std::is_same_v<Variant, boost_complex_t>
-#endif
-	)
+	else
 	{
-		std::uniform_int_distribution<> dis(0, 2);
-		for (std::size_t i = 0; i < count; ++i)
+		for (auto _: state)
 		{
-			switch (dis(gen))
+			benchmark::DoNotOptimize(42);
+		}
+	}
+}
+
+template<typename Variant>
+static void BM_VrtMatch(benchmark::State &state)
+{
+	if constexpr (std::is_same_v<Variant, test_variant_vrt>)
+	{
+		Variant v { medium_object { 42, "test" } };
+		for (auto _: state)
+		{
+			auto result = vrt::match(v) | [](const auto &value) -> int
 			{
-				case 0:
-					variants.emplace_back(trivial_small{static_cast<int>(i)});
-					break;
-				case 1:
-					variants.emplace_back(non_trivial_small{static_cast<int>(i)});
-					break;
-				case 2:
-					variants.emplace_back(medium_object{static_cast<int>(i), "test"});
-					break;
-			}
+				if constexpr (std::is_same_v<std::decay_t<decltype(value)>, int>)
+				{
+					return value * 2;
+				}
+				else if constexpr (std::is_same_v<std::decay_t<decltype(value)>, std::string>)
+				{
+					return static_cast<int>(value.length());
+				}
+				else if constexpr (std::is_same_v<std::decay_t<decltype(value)>, simple_pod>)
+				{
+					return value.x;
+				}
+				else if constexpr (std::is_same_v<std::decay_t<decltype(value)>, medium_object>)
+				{
+					return value.data[0];
+				}
+				else if constexpr (std::is_same_v<std::decay_t<decltype(value)>, complex_object>)
+				{
+					return *value.ptr;
+				}
+				else
+				{
+					return 0;
+				}
+			};
+			benchmark::DoNotOptimize(result);
 		}
 	}
-	else if constexpr (std::is_same_v<Variant, std_large_t> ||
-	                   std::is_same_v<Variant, vrt_large_t>
-#ifdef HAS_BOOST
-	                   || std::is_same_v<Variant, boost_large_t>
-#endif
-	)
+	else
 	{
-		std::uniform_int_distribution<> dis(0, 5);
-		for (std::size_t i = 0; i < count; ++i)
+		for (auto _: state)
 		{
-			switch (dis(gen))
+			benchmark::DoNotOptimize(42);
+		}
+	}
+}
+
+template<typename Variant>
+static void BM_TypeQuery_Index(benchmark::State &state)
+{
+	Variant v { std::string("test") };
+	for (auto _: state)
+	{
+		auto idx = [&]()
+		{
+			if constexpr (std::is_same_v<Variant, test_variant_vrt>)
 			{
-				case 0:
-					variants.emplace_back(static_cast<int>(i));
-					break;
-				case 1:
-					variants.emplace_back(static_cast<double>(i) * 1.5);
-					break;
-				case 2:
-					variants.emplace_back(std::string("test_") + std::to_string(i));
-					break;
-				case 3:
-					variants.emplace_back(std::vector<int>(i % 10, static_cast<int>(i)));
-					break;
-				case 4:
-					variants.emplace_back(medium_object{static_cast<int>(i), "test"});
-					break;
-				case 5:
-					variants.emplace_back(large_object{static_cast<int>(i)});
-					break;
+				return v.index();
 			}
-		}
+#ifdef HAS_BOOST_VARIANT
+			else if constexpr (std::is_same_v<Variant, test_variant_boost>)
+			{
+				return v.which();
+			}
+#endif
+#ifdef HAS_BOOST_VARIANT2
+			else if constexpr (std::is_same_v<Variant, test_variant_boost2>)
+			{
+				return v.index();
+			}
+#endif
+			else
+			{
+				return v.index();
+			}
+		}();
+		benchmark::DoNotOptimize(idx);
 	}
-
-	return variants;
 }
 
 template<typename Variant>
-static void BM_StdVisit_Batch(benchmark::State& state)
+static void BM_TypeQuery_HoldsAlternative(benchmark::State &state)
 {
-	constexpr std::size_t VARIANT_COUNT = 1000;
-	auto variants = generate_test_variants<Variant>(VARIANT_COUNT);
-	cvisitor visitor;
-
-	for (auto _ : state)
+	Variant v { std::string("test") };
+	for (auto _: state)
 	{
-		std::size_t sum = 0;
-		for (const auto& v : variants)
+		bool result = [&]()
 		{
-			sum += std::visit(visitor, v);
-		}
-		benchmark::DoNotOptimize(sum);
+			if constexpr (std::is_same_v<Variant, test_variant_vrt>)
+			{
+				return v.template holds_alternative<std::string>();
+			}
+#ifdef HAS_BOOST_VARIANT
+			else if constexpr (std::is_same_v<Variant, test_variant_boost>)
+			{
+				return boost::get<std::string>(&v) != nullptr;
+			}
+#endif
+#ifdef HAS_BOOST_VARIANT2
+			else if constexpr (std::is_same_v<Variant, test_variant_boost2>)
+			{
+				return boost::variant2::holds_alternative<std::string>(v);
+			}
+#endif
+			else
+			{
+				return std::holds_alternative<std::string>(v);
+			}
+		}();
+		benchmark::DoNotOptimize(result);
 	}
-	state.SetItemsProcessed(state.iterations() * VARIANT_COUNT);
 }
 
 template<typename Variant>
-static void BM_VrtVisit_Batch(benchmark::State& state)
+static void BM_ValueAccess_Get(benchmark::State &state)
 {
-	constexpr std::size_t VARIANT_COUNT = 1000;
-	auto variants = generate_test_variants<Variant>(VARIANT_COUNT);
-	cvisitor visitor;
-
-	for (auto _ : state)
+	Variant v { std::string("benchmark_test") };
+	for (auto _: state)
 	{
-		std::size_t sum = 0;
-		for (const auto& v : variants)
-		{
-			sum += vrt::visit(visitor, v);
-		}
-		benchmark::DoNotOptimize(sum);
+		const auto &result = [&]() -> const std::string &{
+			if constexpr (std::is_same_v<Variant, test_variant_vrt>)
+			{
+				return vrt::get<std::string>(v);
+			}
+#ifdef HAS_BOOST_VARIANT
+			else if constexpr (std::is_same_v<Variant, test_variant_boost>)
+			{
+				return boost::get<std::string>(v);
+			}
+#endif
+#ifdef HAS_BOOST_VARIANT2
+			else if constexpr (std::is_same_v<Variant, test_variant_boost2>)
+			{
+				return boost::variant2::get<std::string>(v);
+			}
+#endif
+			else
+			{
+				return std::get<std::string>(v);
+			}
+		}();
+		benchmark::DoNotOptimize(result);
 	}
-	state.SetItemsProcessed(state.iterations() * VARIANT_COUNT);
 }
 
 template<typename Variant>
-static void BM_VrtSwitch_Batch(benchmark::State& state)
+static void BM_ValueAccess_GetIf(benchmark::State &state)
 {
-	constexpr std::size_t VARIANT_COUNT = 1000;
-	auto variants = generate_test_variants<Variant>(VARIANT_COUNT);
-
-	for (auto _ : state)
+	Variant v { std::string("benchmark_test") };
+	for (auto _: state)
 	{
-		std::size_t sum = 0;
-		for (const auto& v : variants)
-		{
-			sum += switch_visit_impl(v);
-		}
-		benchmark::DoNotOptimize(sum);
+		const auto *result = [&]() -> const std::string *{
+			if constexpr (std::is_same_v<Variant, test_variant_vrt>)
+			{
+				return vrt::get_if<std::string>(&v);
+			}
+#ifdef HAS_BOOST_VARIANT
+			else if constexpr (std::is_same_v<Variant, test_variant_boost>)
+			{
+				return boost::get<std::string>(&v);
+			}
+#endif
+#ifdef HAS_BOOST_VARIANT2
+			else if constexpr (std::is_same_v<Variant, test_variant_boost2>)
+			{
+				return boost::variant2::get_if<std::string>(&v);
+			}
+#endif
+			else
+			{
+				return std::get_if<std::string>(&v);
+			}
+		}();
+		benchmark::DoNotOptimize(result);
 	}
-	state.SetItemsProcessed(state.iterations() * VARIANT_COUNT);
 }
 
-#ifdef HAS_BOOST
-template<typename Variant>
-static void BM_BoostVisit_Batch(benchmark::State& state)
-{
-	constexpr std::size_t VARIANT_COUNT = 1000;
-	auto variants = generate_test_variants<Variant>(VARIANT_COUNT);
-	boost_visitor visitor;
+#define REGISTER_BENCHMARKS(lib, variant_type) \
+    BENCHMARK(BM_DefaultConstruction<variant_type>)->Name(lib "/DefaultConstruction"); \
+    BENCHMARK(BM_ValueConstruction_Int<variant_type>)->Name(lib "/ValueConstruction/Int"); \
+    BENCHMARK(BM_ValueConstruction_String<variant_type>)->Name(lib "/ValueConstruction/String"); \
+    BENCHMARK(BM_ValueConstruction_Complex<variant_type>)->Name(lib "/ValueConstruction/Complex"); \
+    BENCHMARK(BM_CopyConstruction<variant_type>)->Name(lib "/CopyConstruction"); \
+    BENCHMARK(BM_MoveConstruction<variant_type>)->Name(lib "/MoveConstruction"); \
+    BENCHMARK(BM_CopyAssignment_SameType<variant_type>)->Name(lib "/CopyAssignment/SameType"); \
+    BENCHMARK(BM_CopyAssignment_DifferentType<variant_type>)->Name(lib "/CopyAssignment/DifferentType"); \
+    BENCHMARK(BM_MoveAssignment_SameType<variant_type>)->Name(lib "/MoveAssignment/SameType"); \
+    BENCHMARK(BM_MoveAssignment_DifferentType<variant_type>)->Name(lib "/MoveAssignment/DifferentType"); \
+    BENCHMARK(BM_Emplace_Int<variant_type>)->Name(lib "/Emplace/Int"); \
+    BENCHMARK(BM_Emplace_String<variant_type>)->Name(lib "/Emplace/String"); \
+    BENCHMARK(BM_Emplace_Complex<variant_type>)->Name(lib "/Emplace/Complex"); \
+    BENCHMARK(BM_SimpleVisitor<variant_type>)->Name(lib "/SimpleVisitor"); \
+    BENCHMARK(BM_ComplexVisitor<variant_type>)->Name(lib "/ComplexVisitor"); \
+    BENCHMARK(BM_TypeQuery_Index<variant_type>)->Name(lib "/TypeQuery/Index"); \
+    BENCHMARK(BM_TypeQuery_HoldsAlternative<variant_type>)->Name(lib "/TypeQuery/HoldsAlternative"); \
+    BENCHMARK(BM_ValueAccess_Get<variant_type>)->Name(lib "/ValueAccess/Get"); \
+    BENCHMARK(BM_ValueAccess_GetIf<variant_type>)->Name(lib "/ValueAccess/GetIf");
 
-	for (auto _ : state)
-	{
-		std::size_t sum = 0;
-		for (const auto& v : variants)
-		{
-			sum += boost::apply_visitor(visitor, v);
-		}
-		benchmark::DoNotOptimize(sum);
-	}
-	state.SetItemsProcessed(state.iterations() * VARIANT_COUNT);
-}
+REGISTER_BENCHMARKS("std", test_variant_std)
+REGISTER_BENCHMARKS("vrt", test_variant_vrt)
+
+BENCHMARK(BM_VrtSwitch<test_variant_vrt>)->Name("vrt/VrtSwitch");
+BENCHMARK(BM_VrtMatch<test_variant_vrt>)->Name("vrt/VrtMatch");
+
+#ifdef HAS_BOOST_VARIANT
+REGISTER_BENCHMARKS("boost", test_variant_boost)
 #endif
 
-template<typename Variant>
-static void BM_StdVisit_Single(benchmark::State& state)
-{
-	Variant v;
-
-	if constexpr (std::is_same_v<Variant, std_simple_t>
-#ifdef HAS_BOOST
-	              || std::is_same_v<Variant, boost_simple_t>
+#ifdef HAS_BOOST_VARIANT2
+REGISTER_BENCHMARKS("boost2", test_variant_boost2)
 #endif
-	)
-	{
-		v = 42;
-	}
-	else if constexpr (std::is_same_v<Variant, std_complex_t>
-#ifdef HAS_BOOST
-	                   || std::is_same_v<Variant, boost_complex_t>
-#endif
-	)
-	{
-		v = trivial_small{42};
-	}
-	else if constexpr (std::is_same_v<Variant, std_large_t>
-#ifdef HAS_BOOST
-	                   || std::is_same_v<Variant, boost_large_t>
-#endif
-	)
-	{
-		v = 42;
-	}
-
-	cvisitor visitor;
-
-	for (auto _ : state)
-	{
-		benchmark::DoNotOptimize(std::visit(visitor, v));
-	}
-}
-
-template<typename Variant>
-static void BM_VrtVisit_Single(benchmark::State& state)
-{
-	Variant v;
-
-	if constexpr (std::is_same_v<Variant, vrt_simple_t>)
-	{
-		v = 42;
-	}
-	else if constexpr (std::is_same_v<Variant, vrt_complex_t>)
-	{
-		v = trivial_small{42};
-	}
-	else if constexpr (std::is_same_v<Variant, vrt_large_t>)
-	{
-		v = 42;
-	}
-
-	cvisitor visitor;
-
-	for (auto _ : state)
-	{
-		benchmark::DoNotOptimize(vrt::visit(visitor, v));
-	}
-}
-
-template<typename Variant>
-static void BM_VrtSwitch_Single(benchmark::State& state)
-{
-	Variant v;
-
-	if constexpr (std::is_same_v<Variant, vrt_simple_t>)
-	{
-		v = 42;
-	}
-	else if constexpr (std::is_same_v<Variant, vrt_complex_t>)
-	{
-		v = trivial_small{42};
-	}
-	else if constexpr (std::is_same_v<Variant, vrt_large_t>)
-	{
-		v = 42;
-	}
-
-	for (auto _ : state)
-	{
-		benchmark::DoNotOptimize(switch_visit_impl(v));
-	}
-}
-
-#ifdef HAS_BOOST
-template<typename Variant>
-static void BM_BoostVisit_Single(benchmark::State& state)
-{
-	Variant v;
-
-	if constexpr (std::is_same_v<Variant, boost_simple_t>)
-	{
-		v = 42;
-	}
-	else if constexpr (std::is_same_v<Variant, boost_complex_t>)
-	{
-		v = trivial_small{42};
-	}
-	else if constexpr (std::is_same_v<Variant, boost_large_t>)
-	{
-		v = 42;
-	}
-
-	boost_visitor visitor;
-
-	for (auto _ : state)
-	{
-		benchmark::DoNotOptimize(boost::apply_visitor(visitor, v));
-	}
-}
-#endif
-
-template<typename Variant>
-static void BM_Construction(benchmark::State& state)
-{
-	for (auto _ : state)
-	{
-		if constexpr (requires { Variant{42}; })
-		{
-			Variant v1{42};
-			benchmark::DoNotOptimize(v1);
-		}
-		if constexpr (requires { Variant{3.14}; })
-		{
-			Variant v2{3.14};
-			benchmark::DoNotOptimize(v2);
-		}
-		if constexpr (requires { Variant{std::string("test")}; })
-		{
-			Variant v3{std::string("test")};
-			benchmark::DoNotOptimize(v3);
-		}
-		if constexpr (requires { Variant{trivial_small{123}}; })
-		{
-			Variant v4{trivial_small{123}};
-			benchmark::DoNotOptimize(v4);
-		}
-	}
-}
-
-template<typename Variant>
-static void BM_Assignment(benchmark::State& state)
-{
-	Variant v;
-
-	for (auto _ : state)
-	{
-		if constexpr (requires { v = 42; })
-		{
-			v = 42;
-			benchmark::DoNotOptimize(v);
-		}
-		if constexpr (requires { v = 3.14; })
-		{
-			v = 3.14;
-			benchmark::DoNotOptimize(v);
-		}
-		if constexpr (requires { v = std::string("test"); })
-		{
-			v = std::string("test");
-			benchmark::DoNotOptimize(v);
-		}
-	}
-}
-
-template<typename Variant>
-static void BM_Copy(benchmark::State& state)
-{
-	auto variants = generate_test_variants<Variant>(100);
-
-	for (auto _ : state)
-	{
-		for (const auto& original : variants)
-		{
-			Variant copy = original;
-			benchmark::DoNotOptimize(copy);
-		}
-	}
-	state.SetItemsProcessed(state.iterations() * 100);
-}
-
-template<typename Variant>
-static void BM_Move(benchmark::State& state)
-{
-	for (auto _ : state)
-	{
-		auto variants = generate_test_variants<Variant>(100);
-		for (auto&& original : variants)
-		{
-			Variant moved = std::move(original);
-			benchmark::DoNotOptimize(moved);
-		}
-	}
-	state.SetItemsProcessed(state.iterations() * 100);
-}
-
-#define REGISTER_VARIANT_BENCHMARKS(category, std_type, vrt_type) \
-	BENCHMARK(BM_StdVisit_Batch<std_type>)->Name("std::variant/" category "/Visit/Batch"); \
-	BENCHMARK(BM_VrtVisit_Batch<vrt_type>)->Name("vrt::variant/" category "/Visit/Batch"); \
-	BENCHMARK(BM_VrtSwitch_Batch<vrt_type>)->Name("vrt::variant/" category "/Switch/Batch"); \
-	BENCHMARK(BM_StdVisit_Single<std_type>)->Name("std::variant/" category "/Visit/Single"); \
-	BENCHMARK(BM_VrtVisit_Single<vrt_type>)->Name("vrt::variant/" category "/Visit/Single"); \
-	BENCHMARK(BM_VrtSwitch_Single<vrt_type>)->Name("vrt::variant/" category "/Switch/Single"); \
-	BENCHMARK(BM_Construction<std_type>)->Name("std::variant/" category "/Construction"); \
-	BENCHMARK(BM_Construction<vrt_type>)->Name("vrt::variant/" category "/Construction"); \
-	BENCHMARK(BM_Assignment<std_type>)->Name("std::variant/" category "/Assignment"); \
-	BENCHMARK(BM_Assignment<vrt_type>)->Name("vrt::variant/" category "/Assignment"); \
-	BENCHMARK(BM_Copy<std_type>)->Name("std::variant/" category "/Copy"); \
-	BENCHMARK(BM_Copy<vrt_type>)->Name("vrt::variant/" category "/Copy"); \
-	BENCHMARK(BM_Move<std_type>)->Name("std::variant/" category "/Move"); \
-	BENCHMARK(BM_Move<vrt_type>)->Name("vrt::variant/" category "/Move");
-
-#ifdef HAS_BOOST
-#define REGISTER_BOOST_BENCHMARKS(category, boost_type) \
-	BENCHMARK(BM_BoostVisit_Batch<boost_type>)->Name("boost::variant/" category "/Visit/Batch"); \
-	BENCHMARK(BM_BoostVisit_Single<boost_type>)->Name("boost::variant/" category "/Visit/Single"); \
-	BENCHMARK(BM_Construction<boost_type>)->Name("boost::variant/" category "/Construction"); \
-	BENCHMARK(BM_Assignment<boost_type>)->Name("boost::variant/" category "/Assignment"); \
-	BENCHMARK(BM_Copy<boost_type>)->Name("boost::variant/" category "/Copy"); \
-	BENCHMARK(BM_Move<boost_type>)->Name("boost::variant/" category "/Move");
-#else
-#define REGISTER_BOOST_BENCHMARKS(category, boost_type)
-#endif
-
-REGISTER_VARIANT_BENCHMARKS("Simple", std_simple_t, vrt_simple_t)
-REGISTER_BOOST_BENCHMARKS("Simple", boost_simple_t)
-
-REGISTER_VARIANT_BENCHMARKS("Complex", std_complex_t, vrt_complex_t)
-REGISTER_BOOST_BENCHMARKS("Complex", boost_complex_t)
-
-REGISTER_VARIANT_BENCHMARKS("Large", std_large_t, vrt_large_t)
-REGISTER_BOOST_BENCHMARKS("Large", boost_large_t)
 
 BENCHMARK_MAIN();

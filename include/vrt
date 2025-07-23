@@ -19,7 +19,7 @@ namespace vrt
 	class variant
 	{
 		/* note: fold expressions like ((C ? foo() : bar()), ...)
-		 *	execute foo() only when C is true for the matching type */
+		 *	execute foo() only when C is true for the matching type; */
 		static_assert(sizeof...(Ts) > 0, "variant must have at least one alternative");
 		static_assert((std::is_destructible_v<Ts> && ...), "all alternatives must be destructible");
 
@@ -107,6 +107,59 @@ namespace vrt
 				((++idx - 1 == other.i ? move_construct_no_invalidate<Ts>(other) : void()), ...);
 				i = other.i;
 				/* deliberately don't invalidate `other` for swap purposes */
+			}
+		}
+
+		/* note: helper function for FUN overload resolution per standard
+		 * https://eel.is/c++draft/variant.ctor#14 and https://eel.is/c++draft/variant.assign#11 */
+		template<typename T>
+		static constexpr std::size_t resolve_alternative_index() noexcept
+		{
+			/* standard: "build an imaginary function FUN(Ti) for each alternative type Ti
+			 * for which Ti x[] = {std::forward<T>(t)}; is well-formed"
+			 * the overload selected by overload resolution defines the alternative
+			 *
+			 * this simulates the FUN overload resolution by finding the first
+			 * alternative that can be constructed from T and is unique */
+
+			std::size_t idx = 0;
+			std::size_t result = sizeof...(Ts);
+			((std::is_same_v<std::decay_t<T>, Ts> ? (result = idx, 0) : ++idx), ...);
+			if (result != sizeof...(Ts))
+				return result;
+
+			/* look for constructible types */
+			idx = 0;
+			result = sizeof...(Ts);
+			((std::is_constructible_v<Ts, T> ? (result = result == sizeof...(Ts) ? idx : result, 0) : ++idx), ...);
+			return result;
+		}
+
+		template<typename Ti>
+		void emplace_move_alternative(variant&& other)
+		{
+			constexpr std::size_t alt_index = type_index<Ti>();
+			destroy();
+			construct<Ti>(std::move(*other.ptr<Ti>()));
+			i = alt_index;
+		}
+
+		template<typename Ti>
+		void emplace_copy_alternative(const variant& other)
+		{
+			constexpr std::size_t alt_index = type_index<Ti>();
+			if constexpr (std::is_nothrow_copy_constructible_v<Ti> || !std::is_nothrow_move_constructible_v<Ti>)
+			{
+				/* use emplace directly for performance */
+				destroy();
+				construct<Ti>(*other.ptr<Ti>());
+				i = alt_index;
+			}
+			else
+			{
+				/* use copy-and-swap for strong exception safety */
+				variant temp(other);
+				swap(temp);
 			}
 		}
 
@@ -243,40 +296,119 @@ namespace vrt
 		/** @brief Copy assignment operator */
 		constexpr variant& operator=(const variant& other)
 		{
-			if (this != &other)
+			/* https://eel.is/c++draft/variant.assign#1 */
+			static_assert(((std::is_copy_constructible_v<Ts> && std::is_copy_assignable_v<Ts>) && ...),
+						  "all alternatives must be copy constructible and copy assignable");
+
+			if (this == &other)
+				return *this;
+
+			const std::size_t j = other.index();
+
+			/* (2.1) if neither `*this` nor `other` holds a value, there is no effect */
+			if (i == variant_npos && j == variant_npos)
+				return *this;
+
+			/* (2.2) if `*this` holds a value but `other` does not, destroy and set to not hold value */
+			if (i != variant_npos && j == variant_npos)
 			{
-				variant temp(other);
-				swap(temp);
+				destroy();
+				i = variant_npos;
+				return *this;
 			}
+
+			/* (2.3) if index() == j, assign the value contained in `other` to `*this` */
+			if (i == j && i != variant_npos)
+			{
+				std::size_t idx = 0;
+				((++idx - 1 == i ? (void)(*ptr<Ts>() = *other.ptr<Ts>()) : void()), ...);
+				return *this;
+			}
+
+			std::size_t idx = 0;
+			((++idx - 1 == j ? emplace_copy_alternative<Ts>(other) : void()), ...);
 			return *this;
 		}
 
 		/** @brief Move assignment operator */
-		constexpr variant& operator=(variant&& other) noexcept(nothrow_move_constructible)
+		constexpr variant& operator=(variant&& rhs)
+			noexcept(((std::is_nothrow_move_constructible_v<Ts> && std::is_nothrow_move_assignable_v<Ts>) && ...))
 		{
-			if (this != &other)
+			/* https://eel.is/c++draft/variant.assign#6 */
+			static_assert(((std::is_move_constructible_v<Ts> && std::is_move_assignable_v<Ts>) && ...),
+						  "all alternatives must be move constructible and move assignable");
+
+			if (this == &rhs)
+				return *this;
+
+			const std::size_t j = rhs.index();
+
+			/* (8.1) if neither *this nor rhs holds a value, there is no effect */
+			if (i == variant_npos && j == variant_npos)
+				return *this;
+
+			/* (8.2) if *this holds a value but rhs does not, destroy and set to not hold value */
+			if (i != variant_npos && j == variant_npos)
 			{
-				variant temp(std::move(other));
-				swap(temp);
+				destroy();
+				i = variant_npos;
+				return *this;
 			}
+
+			/* (8.3) if index() == j, assign GET<j>(std::move(rhs)) to the contained value */
+			if (i == j && i != variant_npos)
+			{
+				std::size_t idx = 0;
+				((++idx - 1 == i ? (void)(*ptr<Ts>() = std::move(*rhs.ptr<Ts>())) : void()), ...);
+				return *this;
+			}
+
+			/* (8.4) otherwise, equivalent to emplace<j>(GET<j>(std::move(rhs))) */
+			std::size_t idx = 0;
+			((++idx - 1 == j ? emplace_move_alternative<Ts>(std::move(rhs)) : void()), ...);
 			return *this;
 		}
 
 		/** @brief Converting assignment operator */
 		template<typename T>
 			requires((std::is_same_v<std::decay_t<T>, Ts> || ...) &&
-			         !std::is_same_v<std::decay_t<T>, variant> &&
-			         std::is_constructible_v<std::decay_t<T>, T>)
-		constexpr variant& operator=(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
+					 !std::is_same_v<std::decay_t<T>, variant> &&
+					 (resolve_alternative_index<T>() < sizeof...(Ts)))
+		constexpr variant& operator=(T&& t)
 		{
-			/* this is for single values, not variant-to-variant assignment. therefore
-			 * there would be no risk of partial state since it would be destroyed first the contruct */
-			using type = std::decay_t<T>;
-			destroy();
-			construct<type>(std::forward<T>(t));
-			i = type_index<type>();
+			/* https://eel.is/c++draft/variant.assign#11 */
+			constexpr std::size_t j = resolve_alternative_index<T>();
+			using Tj = std::tuple_element_t<j, std::tuple<Ts...>>;
+
+			static_assert(std::is_assignable_v<Tj&, T> && std::is_constructible_v<Tj, T>,
+						  "selected alternative must be assignable and constructible from T");
+
+			/* (13.1) if *this holds a Tj, assigns std::forward<T>(t) to the contained value */
+			if (i == j && i != variant_npos)
+			{
+				*ptr<Tj>() = std::forward<T>(t);
+				return *this;
+			}
+
+			/* (13.2) if is_nothrow_constructible_v<Tj, T> || !is_nothrow_move_constructible_v<Tj> */
+			if constexpr (std::is_nothrow_constructible_v<Tj, T> || !std::is_nothrow_move_constructible_v<Tj>)
+			{
+				destroy();
+				construct<Tj>(std::forward<T>(t));
+				i = j;
+			}
+			/* (13.3) otherwise, equivalent to emplace<j>(Tj(std::forward<T>(t))) */
+			else
+			{
+				destroy();
+				construct<Tj>(Tj(std::forward<T>(t)));
+				i = j;
+			}
 			return *this;
 		}
+
+		/* note: noexcept specification per standard https://eel.is/c++draft/variant.assign#16:
+		 * is_nothrow_assignable_v<Tj&, T> && is_nothrow_constructible_v<Tj, T> */
 
 		/** @brief Destructor */
 		constexpr ~variant()
@@ -340,8 +472,9 @@ namespace vrt
 #endif
 
 		/** @brief Swap contents with another variant */
-		constexpr void swap(variant& other) noexcept(nothrow_move_constructible)
+		constexpr void swap(variant& other) noexcept(((std::is_nothrow_move_constructible_v<Ts> && std::is_nothrow_swappable_v<Ts>) && ...))
 		{
+			static_assert((std::is_swappable_v<Ts> && ...), "all alternatives must be swappable");
 			if (this == &other)
 				return;
 
@@ -387,7 +520,8 @@ namespace vrt
 				return;
 			}
 
-			/* standard three-way move; note: this is the slowest by far */
+			/* standard three-way move for non-trivially-relocatable types;
+			 * note: this is the slowest by far */
 			variant temp;
 			temp.move_from_no_invalidate(*this);
 
@@ -695,11 +829,15 @@ namespace vrt
 		Variant&& var;
 	};
 
+	/** @brief Deduction guide for `match_builder` */
+	template<typename Variant>
+	match_builder(Variant&&) -> match_builder<Variant>;
+
 	/** @brief Create a pattern match builder */
 	template<typename Variant>
 	constexpr auto match(Variant&& v)
 	{
-		return match_builder{std::forward<Variant>(v)};
+		return match_builder{ std::forward<Variant>(v) };
 	}
 }
 
