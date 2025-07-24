@@ -839,6 +839,24 @@ namespace vrt
 		using type = std::tuple_element_t<I, std::tuple<Ts...>>;
 	};
 
+	template<std::size_t I, typename... Ts>
+	struct variant_alternative<I, const variant<Ts...>>
+	{
+		using type = std::add_const_t<typename variant_alternative<I, variant<Ts...>>::type>;
+	};
+
+	template<std::size_t I, typename... Ts>
+	struct variant_alternative<I, volatile variant<Ts...>>
+	{
+		using type = std::add_volatile_t<typename variant_alternative<I, variant<Ts...>>::type>;
+	};
+
+	template<std::size_t I, typename... Ts>
+	struct variant_alternative<I, const volatile variant<Ts...>>
+	{
+		using type = std::add_cv_t<typename variant_alternative<I, variant<Ts...>>::type>;
+	};
+
 	/** @brief Convenience alias template for variant_alternative */
 	template<std::size_t I, typename T>
 	using variant_alternative_t = typename variant_alternative<I, T>::type;

@@ -31,7 +31,9 @@ if(LIBVRT_BUILD_TESTS)
     add_executable(vrt-tests
             tests/access.cpp
             tests/assignment.cpp
+            tests/cmp.cpp
             tests/construction.cpp
+            tests/utility.cpp
             tests/visitor.cpp
     )
     target_link_libraries(vrt-tests PRIVATE

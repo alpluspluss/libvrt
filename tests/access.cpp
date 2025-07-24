@@ -1,8 +1,8 @@
 /* this project is part of the vrt project; licensed under the MIT license. see LICENSE for more info */
 
-#include <gtest/gtest.h>
-#include <vrt>
 #include <string>
+#include <vrt>
+#include <gtest/gtest.h>
 
 class AccessTest : public ::testing::Test
 {
