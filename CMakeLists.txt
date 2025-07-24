@@ -33,6 +33,7 @@ if(LIBVRT_BUILD_TESTS)
             tests/assignment.cpp
             tests/cmp.cpp
             tests/construction.cpp
+            tests/fun-mechanism.cpp
             tests/utility.cpp
             tests/visitor.cpp
     )
