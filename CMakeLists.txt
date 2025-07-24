@@ -29,6 +29,7 @@ if(LIBVRT_BUILD_TESTS)
     find_package(GTest REQUIRED)
 
     add_executable(vrt-tests
+            tests/access.cpp
             tests/assignment.cpp
             tests/construction.cpp
     )
@@ -61,7 +62,7 @@ if(LIBVRT_BUILD_BENCHMARKS)
         if(Boost_FOUND)
             target_link_libraries(vrt-benchmarks PRIVATE Boost::boost)
             set(BOOST_VARIANT_FOUND TRUE)
-            message(STATUS "Boost found - assuming both Boost.Variant and Boost.Variant2 available")
+            message(STATUS "Boost found")
             target_compile_definitions(vrt-benchmarks PRIVATE HAS_BOOST_VARIANT HAS_BOOST_VARIANT2)
         else()
             find_path(BOOST_INCLUDE_DIR boost/variant.hpp)
