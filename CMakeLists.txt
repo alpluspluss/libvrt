@@ -28,7 +28,9 @@ if(LIBVRT_BUILD_TESTS)
     enable_testing()
     find_package(GTest REQUIRED)
 
-    add_executable(vrt-tests tests/variant.cpp)
+    add_executable(vrt-tests
+            tests/construction.cpp
+    )
     target_link_libraries(vrt-tests PRIVATE
             vrt::vrt
             GTest::gtest
