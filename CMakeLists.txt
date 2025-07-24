@@ -32,6 +32,7 @@ if(LIBVRT_BUILD_TESTS)
             tests/access.cpp
             tests/assignment.cpp
             tests/construction.cpp
+            tests/visitor.cpp
     )
     target_link_libraries(vrt-tests PRIVATE
             vrt::vrt
