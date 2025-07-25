@@ -239,16 +239,16 @@ namespace vrt
 		}
 
 		template<typename T>
-		static constexpr auto is_in_place_type_v = false;
+		static constexpr bool is_in_place_type_v = false;
 
 		template<typename T>
-		static constexpr auto is_in_place_type_v<std::in_place_type_t<T> > = true;
+		static constexpr bool is_in_place_type_v<std::in_place_type_t<T> > = true;
 
 		template<typename T>
-		static constexpr auto is_in_place_index_v = false;
+		static constexpr bool is_in_place_index_v = false;
 
 		template<std::size_t I>
-		static constexpr auto is_in_place_index_v<std::in_place_index_t<I> > = true;
+		static constexpr bool is_in_place_index_v<std::in_place_index_t<I> > = true;
 
 	public:
 		/** @brief Compile-time type index constants for switch statements */
