@@ -7,6 +7,60 @@
 #include <tuple>
 #include <variant>
 
+/* warning: do not use anything in `vrt::d`; they are implementation details and may
+ * change without notice */
+namespace vrt::d
+{
+	/* note: helpers function for FUN overload resolution per standard
+	 * https://eel.is/c++draft/variant.ctor#14 and https://eel.is/c++draft/variant.assign#11 */
+	template<typename T>
+	struct array_init_test { T s[1]; };
+
+	template<std::size_t I, typename T, typename U, typename = void>
+	struct build_fun
+	{
+		void fun() = delete; /* this means it's not a viable overload */
+	};
+
+	/* specialization for types where Ti x[] = { std::forward<T>(t) }; is well-formed */
+	template<std::size_t I, typename T, typename U>
+		   requires requires { array_init_test<U>{ { std::declval<T>() } }; }
+	struct build_fun<I, T, U>
+	{
+		static std::integral_constant<std::size_t, I> fun(U);
+	};
+
+	template<typename T, typename... E>
+	struct build_funs2;
+
+	/* then inherit from all `build_fun` specializations to bring all
+	 * FUN overload into scope */
+	template<typename T, typename... E, std::size_t... Is>
+	struct build_funs2<T, std::index_sequence<Is...>, E...> : build_fun<Is, T, E>...
+	{
+		using build_fun<Is, T, E>::fun...;
+	};
+
+	template<typename T, typename... E>
+	using build_funs = build_funs2<T, std::make_index_sequence<sizeof...(E)>, E...>;
+
+	template<typename T, typename... E>
+	constexpr std::size_t resolve_alternative_index() noexcept
+	{
+		/* dev-note: with some template metaprogramming, it is possible to produce
+		 * way better error messages compared to 20KB wall of text by the c++ compiler */
+		if constexpr (requires { build_funs<T, E...>::fun(std::declval<T>()); })
+		{
+			using result_type = decltype(build_funs<T, E...>::fun(std::declval<T>()));
+			return result_type::value;
+		}
+		else
+		{
+			return sizeof...(E); /* invalid index */
+		}
+	}
+}
+
 namespace vrt
 {
 	/** @brief Invalid variant index constant */
@@ -144,53 +198,12 @@ namespace vrt
 			}
 		}
 
-		/* note: helpers function for FUN overload resolution per standard
-		 * https://eel.is/c++draft/variant.ctor#14 and https://eel.is/c++draft/variant.assign#11 */
-		template<typename T>
-		struct array_init_test { T s[1]; };
-
-		template<std::size_t I, typename T, typename U>
-		struct build_fun
-		{
-			void fun() = delete; /* this means it's not a viable overload */
-		};
-
-		/* specialization for types where Ti x[] = { std::forward<T>(t) }; is well-formed */
-		template<std::size_t I, typename T, typename U>
-		requires requires { array_init_test<U>{ { std::declval<T>() } }; }
-		struct build_fun<I, T, U>
-		{
-			static std::integral_constant<std::size_t, I> fun(U);
-		};
-
-		template<typename T, typename = std::make_index_sequence<sizeof...(Ts)>>
-		struct build_funs2;
-
-		/* then inherit from all `build_fun` specializations to bring all
-		 * FUN overload into scope */
-		template<typename T, std::size_t... Is>
-		struct build_funs2<T, std::index_sequence<Is...>> : build_fun<Is, T, Ts>...
-		{
-			using build_fun<Is, T, Ts>::fun...;
-		};
-
-		template<typename T>
-		using build_funs = build_funs2<T>;
-
 		template<typename T>
 		static constexpr std::size_t resolve_alternative_index() noexcept
 		{
 			/* dev-note: with some template metaprogramming, it is possible to produce
 			 * way better error messages compared to 20KB wall of text by the c++ compiler */
-			if constexpr (requires { build_funs<T>::fun(std::declval<T>()); })
-			{
-				using result_type = decltype(build_funs<T>::fun(std::declval<T>()));
-				return result_type::value;
-			}
-			else
-			{
-				return sizeof...(Ts); /* invalid index */
-			}
+			return d::resolve_alternative_index<T, Ts...>();
 		}
 
 		template<typename Ti>
@@ -516,6 +529,7 @@ namespace vrt
 		constexpr T& emplace(Args&&... args)
 		{
 			destroy();
+			i = variant_npos; /* set to valueless before attempting construction for exception safety */
 			construct<T>(std::forward<Args>(args)...);
 			i = type_index<T>();
 			return *ptr<T>();
