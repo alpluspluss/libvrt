@@ -16,7 +16,7 @@ namespace vrt::d
 	template<typename T>
 	struct array_init_test { T s[1]; };
 
-	template<std::size_t I, typename T, typename U, typename = void>
+	template<std::size_t /* I */, typename /* T */, typename /* U */, typename = void>
 	struct build_fun
 	{
 		void fun() = delete; /* this means it's not a viable overload */
@@ -374,13 +374,27 @@ namespace vrt
 		constexpr variant(variant&& other) noexcept(nothrow_move_constructible)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
-			if (other.i != variant_npos)
+			const auto other_index = other.i;
+			if (other_index != variant_npos)
 			{
-				std::size_t idx = 0;
-				((++idx - 1 == other.i ? move_construct<Ts>(std::move(other)) : void()), ...);
-				i = other.i;
-				other.destroy();
-				other.i = variant_npos;
+				if constexpr (nothrow_move_constructible)
+				{
+					std::size_t idx = 0;
+					((++idx - 1 == other_index ? move_construct<Ts>(std::move(other)) : void()), ...);
+					i = other_index;
+					other.destroy();
+					other.i = variant_npos;
+				}
+				else
+				{
+					/* `std::move` in `move_construct` may throw early so we invalidate the
+					 * source first */
+					other.i = variant_npos;
+					std::size_t idx = 0;
+					((++idx - 1 == other_index ? move_construct<Ts>(std::move(other)) : void()), ...);
+					i = other_index;
+					other.destroy();
+				}
 			}
 		}
 
