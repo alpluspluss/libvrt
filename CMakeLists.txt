@@ -24,11 +24,22 @@ target_include_directories(vrt INTERFACE
         $<INSTALL_INTERFACE:include>
 )
 
-if(LIBVRT_BUILD_TESTS)
+if (LIBVRT_BUILD_TESTS)
     enable_testing()
     find_package(GTest REQUIRED)
 
-    add_executable(vrt-tests tests/variant.cpp)
+    add_executable(vrt-tests
+            tests/access.cpp
+            tests/assignment.cpp
+            tests/cmp.cpp
+            tests/construction.cpp
+            tests/exception-safety.cpp
+            tests/fun-mechanism.cpp
+            tests/match.cpp
+            tests/switch.cpp
+            tests/utility.cpp
+            tests/visitor.cpp
+    )
     target_link_libraries(vrt-tests PRIVATE
             vrt::vrt
             GTest::gtest
@@ -37,9 +48,9 @@ if(LIBVRT_BUILD_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(vrt-tests)
-endif()
+endif ()
 
-if(LIBVRT_BUILD_BENCHMARKS)
+if (LIBVRT_BUILD_BENCHMARKS)
     find_package(benchmark REQUIRED)
 
     add_executable(vrt-benchmarks benches/variant.cpp)
@@ -47,34 +58,34 @@ if(LIBVRT_BUILD_BENCHMARKS)
 
     target_compile_options(vrt-benchmarks PRIVATE -O3 -DNDEBUG -march=native)
 
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         target_compile_options(vrt-benchmarks PRIVATE -fno-omit-frame-pointer)
-    endif()
+    endif ()
 
-    if(LIBVRT_BENCHMARK_BOOST)
+    if (LIBVRT_BENCHMARK_BOOST)
         find_package(Boost QUIET)
         set(BOOST_VARIANT_FOUND FALSE)
 
-        if(Boost_FOUND)
+        if (Boost_FOUND)
             target_link_libraries(vrt-benchmarks PRIVATE Boost::boost)
             set(BOOST_VARIANT_FOUND TRUE)
-            message(STATUS "Boost found - assuming both Boost.Variant and Boost.Variant2 available")
+            message(STATUS "Boost found")
             target_compile_definitions(vrt-benchmarks PRIVATE HAS_BOOST_VARIANT HAS_BOOST_VARIANT2)
-        else()
+        else ()
             find_path(BOOST_INCLUDE_DIR boost/variant.hpp)
-            if(BOOST_INCLUDE_DIR)
+            if (BOOST_INCLUDE_DIR)
                 target_include_directories(vrt-benchmarks PRIVATE ${BOOST_INCLUDE_DIR})
                 set(BOOST_VARIANT_FOUND TRUE)
                 message(STATUS "Boost found (header-only) - assuming both variants available")
                 target_compile_definitions(vrt-benchmarks PRIVATE HAS_BOOST_VARIANT HAS_BOOST_VARIANT2)
-            else()
+            else ()
                 message(WARNING "Boost not found, realistic benchmarks will be limited")
-            endif()
-        endif()
-    endif()
-endif()
+            endif ()
+        endif ()
+    endif ()
+endif ()
 
-if(LIBVRT_INSTALL)
+if (LIBVRT_INSTALL)
     include(GNUInstallDirs)
     include(CMakePackageConfigHelpers)
 
@@ -120,14 +131,14 @@ if(LIBVRT_INSTALL)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/vrt.pc
             DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
     )
-endif()
+endif ()
 
 message(STATUS "libvrt configuration:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build tests: ${LIBVRT_BUILD_TESTS}")
 message(STATUS "  Build benchmarks: ${LIBVRT_BUILD_BENCHMARKS}")
-if(LIBVRT_BUILD_BENCHMARKS AND LIBVRT_BENCHMARK_BOOST)
+if (LIBVRT_BUILD_BENCHMARKS AND LIBVRT_BENCHMARK_BOOST)
     message(STATUS "  Boost variants available: ${BOOST_VARIANT_FOUND}")
-endif()
+endif ()
 message(STATUS "  Install: ${LIBVRT_INSTALL}")
 message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")

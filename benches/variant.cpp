@@ -1,3 +1,8 @@
+
+#pragma GCC diagnostic ignored "-Wall"
+#pragma GCC diagnostic ignored "-Wextra"
+#pragma GCC diagnostic ignored "-Wpedantic"
+
 #include <array>
 #include <memory>
 #include <random>

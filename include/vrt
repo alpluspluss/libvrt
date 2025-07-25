@@ -7,10 +7,98 @@
 #include <tuple>
 #include <variant>
 
+/* warning: do not use anything in `vrt::d`; they are implementation details and may
+ * change without notice */
+namespace vrt::d
+{
+	/* note: helpers function for FUN overload resolution per standard
+	 * https://eel.is/c++draft/variant.ctor#14 and https://eel.is/c++draft/variant.assign#11 */
+	template<typename T>
+	struct array_init_test { T s[1]; };
+
+	template<std::size_t /* I */, typename /* T */, typename /* U */, typename = void>
+	struct build_fun
+	{
+		void fun() = delete; /* this means it's not a viable overload */
+	};
+
+	/* specialization for types where Ti x[] = { std::forward<T>(t) }; is well-formed */
+	template<std::size_t I, typename T, typename U>
+		   requires requires { array_init_test<U>{ { std::declval<T>() } }; }
+	struct build_fun<I, T, U>
+	{
+		static std::integral_constant<std::size_t, I> fun(U);
+	};
+
+	template<typename T, typename... E>
+	struct build_funs2;
+
+	/* then inherit from all `build_fun` specializations to bring all
+	 * FUN overload into scope */
+	template<typename T, typename... E, std::size_t... Is>
+	struct build_funs2<T, std::index_sequence<Is...>, E...> : build_fun<Is, T, E>...
+	{
+		using build_fun<Is, T, E>::fun...;
+	};
+
+	template<typename T, typename... E>
+	using build_funs = build_funs2<T, std::make_index_sequence<sizeof...(E)>, E...>;
+
+	template<typename T, typename... E>
+	constexpr std::size_t resolve_alternative_index() noexcept
+	{
+		/* dev-note: with some template metaprogramming, it is possible to produce
+		 * way better error messages compared to 20KB wall of text by the c++ compiler */
+		if constexpr (requires { build_funs<T, E...>::fun(std::declval<T>()); })
+		{
+			using result_type = decltype(build_funs<T, E...>::fun(std::declval<T>()));
+			return result_type::value;
+		}
+		else
+		{
+			return sizeof...(E); /* invalid index */
+		}
+	}
+}
+
 namespace vrt
 {
 	/** @brief Invalid variant index constant */
-	inline constexpr std::size_t variant_npos = static_cast<std::size_t>(-1);
+	inline constexpr auto variant_npos = static_cast<std::size_t>(-1);
+
+	/**
+	 * @brief Empty type for variants that need a default-constructible first alternative
+	 *
+	 * monostate can serve as the first alternative type for a variant to make the variant
+	 * type default constructible when the actual alternatives are not default constructible.
+	 */
+	struct monostate
+	{
+		constexpr monostate() noexcept = default;
+		constexpr monostate(const monostate&) noexcept = default;
+		constexpr monostate(monostate&&) noexcept = default;
+		constexpr monostate& operator=(const monostate&) noexcept = default;
+		constexpr monostate& operator=(monostate&&) noexcept = default;
+		constexpr ~monostate() = default;
+	};
+
+	/** @brief monostate equality comparison - always true */
+	constexpr bool operator==(monostate, monostate) noexcept
+	{
+		return true;
+	}
+
+	/** @brief monostate inequality comparison - always false */
+	constexpr bool operator!=(monostate, monostate) noexcept
+	{
+		return false;
+	}
+
+	/** @brief monostate three-way comparison - always equivalent */
+	constexpr std::strong_ordering operator<=>(monostate, monostate) noexcept
+	{
+		return std::strong_ordering::equivalent;
+	}
 
 	/**
 	 * @brief Type-safe union with switch case support
@@ -110,29 +198,12 @@ namespace vrt
 			}
 		}
 
-		/* note: helper function for FUN overload resolution per standard
-		 * https://eel.is/c++draft/variant.ctor#14 and https://eel.is/c++draft/variant.assign#11 */
 		template<typename T>
 		static constexpr std::size_t resolve_alternative_index() noexcept
 		{
-			/* standard: "build an imaginary function FUN(Ti) for each alternative type Ti
-			 * for which Ti x[] = {std::forward<T>(t)}; is well-formed"
-			 * the overload selected by overload resolution defines the alternative
-			 *
-			 * this simulates the FUN overload resolution by finding the first
-			 * alternative that can be constructed from T and is unique */
-
-			std::size_t idx = 0;
-			std::size_t result = sizeof...(Ts);
-			((std::is_same_v<std::decay_t<T>, Ts> ? (result = idx, 0) : ++idx), ...);
-			if (result != sizeof...(Ts))
-				return result;
-
-			/* look for constructible types */
-			idx = 0;
-			result = sizeof...(Ts);
-			((std::is_constructible_v<Ts, T> ? (result = result == sizeof...(Ts) ? idx : result, 0) : ++idx), ...);
-			return result;
+			/* dev-note: with some template metaprogramming, it is possible to produce
+			 * way better error messages compared to 20KB wall of text by the c++ compiler */
+			return d::resolve_alternative_index<T, Ts...>();
 		}
 
 		template<typename Ti>
@@ -142,6 +213,10 @@ namespace vrt
 			destroy();
 			construct<Ti>(std::move(*other.ptr<Ti>()));
 			i = alt_index;
+
+			/* invalidate `other */
+			other.destroy();
+			other.i = variant_npos;
 		}
 
 		template<typename Ti>
@@ -163,6 +238,18 @@ namespace vrt
 			}
 		}
 
+		template<typename T>
+		static constexpr bool is_in_place_type_v = false;
+
+		template<typename T>
+		static constexpr bool is_in_place_type_v<std::in_place_type_t<T> > = true;
+
+		template<typename T>
+		static constexpr bool is_in_place_index_v = false;
+
+		template<std::size_t I>
+		static constexpr bool is_in_place_index_v<std::in_place_index_t<I> > = true;
+
 	public:
 		/** @brief Compile-time type index constants for switch statements */
 		template<typename T>
@@ -183,18 +270,22 @@ namespace vrt
 
 		/** @brief Converting constructor with perfect forwarding */
 		template<typename T>
-			requires((std::is_same_v<std::decay_t<T>, Ts> || ...) &&
-			         !std::is_same_v<std::decay_t<T>, variant> &&
-			         std::is_constructible_v<std::decay_t<T>, T>)
-		constexpr variant(T&& t) noexcept(std::is_nothrow_constructible_v<std::decay_t<T>, T>)
+			requires(!std::is_same_v<std::decay_t<T>, variant> &&
+				 !is_in_place_type_v<std::decay_t<T>> &&
+				 !is_in_place_index_v<std::decay_t<T>> &&
+				 (resolve_alternative_index<T>() < sizeof...(Ts)))
+		constexpr variant(T&& t)
+		noexcept(std::is_nothrow_constructible_v<
+			std::tuple_element_t<resolve_alternative_index<T>(), std::tuple<Ts...>>, T>)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
-			/* if construction of `T` throws, `*this` will remain in valid empty state
+			/* if construction throws, `*this` will remain in valid empty state
 			 * rather than having a valid index with uninitialized storage */
-			using type = std::decay_t<T>;
-			construct<type>(std::forward<T>(t));
+			constexpr std::size_t selected_index = resolve_alternative_index<T>();
+			using selected_type = std::tuple_element_t<selected_index, std::tuple<Ts...>>;
+			construct<selected_type>(std::forward<T>(t));
 			/* only set valid index after successful construction */
-			i = type_index<type>();
+			i = selected_index;
 		}
 
 		/** @brief In-place constructor by type */
@@ -283,13 +374,27 @@ namespace vrt
 		constexpr variant(variant&& other) noexcept(nothrow_move_constructible)
 			: i(variant_npos) /* start invalid for exception safety */
 		{
-			if (other.i != variant_npos)
+			const auto other_index = other.i;
+			if (other_index != variant_npos)
 			{
-				std::size_t idx = 0;
-				((++idx - 1 == other.i ? move_construct<Ts>(std::move(other)) : void()), ...);
-				i = other.i;
-				other.destroy();
-				other.i = variant_npos;
+				if constexpr (nothrow_move_constructible)
+				{
+					std::size_t idx = 0;
+					((++idx - 1 == other_index ? move_construct<Ts>(std::move(other)) : void()), ...);
+					i = other_index;
+					other.destroy();
+					other.i = variant_npos;
+				}
+				else
+				{
+					/* `std::move` in `move_construct` may throw early so we invalidate the
+					 * source first */
+					other.i = variant_npos;
+					std::size_t idx = 0;
+					((++idx - 1 == other_index ? move_construct<Ts>(std::move(other)) : void()), ...);
+					i = other_index;
+					other.destroy();
+				}
 			}
 		}
 
@@ -330,7 +435,12 @@ namespace vrt
 			return *this;
 		}
 
-		/** @brief Move assignment operator */
+		/**
+		 * @brief Move assignment operator
+		 *
+		 * If both variants hold on the same active alternative, the contained value is move-assigned,
+		 * and the source remains valid but in a moved-from state
+		 */
 		constexpr variant& operator=(variant&& rhs)
 			noexcept(((std::is_nothrow_move_constructible_v<Ts> && std::is_nothrow_move_assignable_v<Ts>) && ...))
 		{
@@ -371,9 +481,8 @@ namespace vrt
 
 		/** @brief Converting assignment operator */
 		template<typename T>
-			requires((std::is_same_v<std::decay_t<T>, Ts> || ...) &&
-					 !std::is_same_v<std::decay_t<T>, variant> &&
-					 (resolve_alternative_index<T>() < sizeof...(Ts)))
+			requires(!std::is_same_v<std::decay_t<T>, variant> &&
+				(resolve_alternative_index<T>() < sizeof...(Ts)))
 		constexpr variant& operator=(T&& t)
 		{
 			/* https://eel.is/c++draft/variant.assign#11 */
@@ -434,6 +543,7 @@ namespace vrt
 		constexpr T& emplace(Args&&... args)
 		{
 			destroy();
+			i = variant_npos; /* set to valueless before attempting construction for exception safety */
 			construct<T>(std::forward<Args>(args)...);
 			i = type_index<T>();
 			return *ptr<T>();
@@ -573,20 +683,16 @@ namespace vrt
 			return holds_alternative<T>() ? ptr<T>() : nullptr;
 		}
 
+#if __cplusplus >= 202600L
 #if __cpp_explicit_this_parameter >= 202110L
 		/** @brief Member visit for single variant (C++26) */
 		template<class Self, class Visitor>
-		constexpr decltype(auto) visit(this Self&& self, Visitor&& vis)
-		{
-			return vrt::visit(std::forward<Visitor>(vis), std::forward<Self>(self));
-		}
+		constexpr decltype(auto) visit(this Self&& self, Visitor&& vis);
 
 		/** @brief Member visit for single variant with explicit return type (C++26) */
 		template<class R, class Self, class Visitor>
-		constexpr R visit(this Self&& self, Visitor&& vis)
-		{
-			return vrt::visit<R>(std::forward<Visitor>(vis), std::forward<Self>(self));
-		}
+		constexpr R visit(this Self&& self, Visitor&& vis);
+#endif
 #endif
 	};
 
@@ -761,6 +867,24 @@ namespace vrt
 		using type = std::tuple_element_t<I, std::tuple<Ts...>>;
 	};
 
+	template<std::size_t I, typename... Ts>
+	struct variant_alternative<I, const variant<Ts...>>
+	{
+		using type = std::add_const_t<typename variant_alternative<I, variant<Ts...>>::type>;
+	};
+
+	template<std::size_t I, typename... Ts>
+	struct variant_alternative<I, volatile variant<Ts...>>
+	{
+		using type = std::add_volatile_t<typename variant_alternative<I, variant<Ts...>>::type>;
+	};
+
+	template<std::size_t I, typename... Ts>
+	struct variant_alternative<I, const volatile variant<Ts...>>
+	{
+		using type = std::add_cv_t<typename variant_alternative<I, variant<Ts...>>::type>;
+	};
+
 	/** @brief Convenience alias template for variant_alternative */
 	template<std::size_t I, typename T>
 	using variant_alternative_t = typename variant_alternative<I, T>::type;
@@ -903,4 +1027,39 @@ namespace std
             return result;
         }
     };
+
+	template<>
+	struct hash<vrt::monostate>
+	{
+		constexpr std::size_t operator()(vrt::monostate) const noexcept
+		{
+			/* note: all monostate objects are equivalent and valueless, thus
+			 * a fixed arbitrary value can be used */
+			return 0x3C18A8B7; /* some random arbitrary value i got from wheel of fortune */
+		}
+	};
+}
+
+/* implementation of all fwd-declared entities of `vrt` namespace */
+namespace vrt
+{
+#if __cplusplus >= 202600L
+#if __cpp_explicit_this_parameter >= 202110L
+	/** @brief Member visit for single variant (C++26) */
+	template<typename... Ts>
+	template<class Self, class Visitor>
+	constexpr decltype(auto) variant<Ts...>::visit(this Self&& self, Visitor&& vis)
+	{
+		return vrt::visit(std::forward<Visitor>(vis), std::forward<Self>(self));
+	}
+
+	/** @brief Member visit for single variant with explicit return type (C++26) */
+	template<typename... Ts>
+	template<class R, class Self, class Visitor>
+	constexpr R variant<Ts...>::visit(this Self&& self, Visitor&& vis)
+	{
+		return vrt::visit<R>(std::forward<Visitor>(vis), std::forward<Self>(self));
+	}
+#endif
+#endif
 }
