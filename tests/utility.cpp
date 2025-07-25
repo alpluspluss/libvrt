@@ -178,8 +178,10 @@ TEST_F(UtilityTest, VariantAlternativeConst)
 {
 	using const_variant = const test_variant;
 	static_assert(std::is_same_v<vrt::variant_alternative_t<0, const_variant>, const int>, "Type mismatch for index 0");
-	static_assert(std::is_same_v<vrt::variant_alternative_t<1, const_variant>, const double>, "Type mismatch for index 1");
-	static_assert(std::is_same_v<vrt::variant_alternative_t<2, const_variant>, const std::string>, "Type mismatch for index 2");
+	static_assert(std::is_same_v<vrt::variant_alternative_t<1, const_variant>, const double>,
+	              "Type mismatch for index 1");
+	static_assert(std::is_same_v<vrt::variant_alternative_t<2, const_variant>, const std::string>,
+	              "Type mismatch for index 2");
 }
 
 TEST_F(UtilityTest, TypeIndexConstants)

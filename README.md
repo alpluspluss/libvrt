@@ -65,7 +65,7 @@ switch (v.index())
 ### Performance
 
 **`vrt::variant` delivers up to 4.6x faster performance than `std::visit`**, with switch
-cases reaching over 860 million operations per second. Both `vrt::visit` and switch 
+cases reaching over 860 million operations per second. Both `vrt::visit` and switch
 cases significantly outperform the standard library.
 
 | Operation         | std::visit | vrt::visit     | vrt::switch    |
