@@ -13,4 +13,8 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Running benchmarks..."
-./build/release/vrt-benchmarks --benchmark_out=assets/bench-results.json --benchmark_out_format=json "$@"
+./build/release/vrt-benchmarks \
+    --benchmark_out=assets/bench-results.json \
+    --benchmark_out_format=json \
+    --benchmark_report_aggregates_only=true \
+    "$@"

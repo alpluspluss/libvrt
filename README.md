@@ -300,7 +300,7 @@ vrt is a drop-in replacement. Simply change `std::variant<T...>` to `vrt::varian
 1. **Keep using `std::visit`** - Replace with `vrt::visit` for full compatibility
 2. **Migrate to switch cases** - Replace visitor patterns with clean switch statements
 
-**Migration example:**
+**Migration Example**
 
 ```cpp
 /* from */
